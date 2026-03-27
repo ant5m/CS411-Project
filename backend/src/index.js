@@ -6,6 +6,15 @@ const { randomUUID } = require('crypto')
 const { supabase, hasSupabaseConfig, getSupabaseConfigErrors } = require('./lib/supabase')
 const { authenticateUser } = require('./lib/auth')
 
+// Optional: Import OpenAI SDK if installed
+let OpenAI
+try {
+  const { OpenAI: OpenAIClient } = require('openai')
+  OpenAI = OpenAIClient
+} catch (e) {
+  console.warn('⚠️ OpenAI SDK not installed. Install with: npm install openai')
+}
+
 const app = express()
 const PORT = Number(process.env.PORT || 4000)
 const CLIENT_ORIGIN = process.env.CLIENT_ORIGIN || 'http://localhost:3000'
@@ -139,43 +148,8 @@ app.post('/api/events', async (req, res) => {
   return res.status(201).json({ ok: true, event })
 })
 
-app.get('/api/stats/daily', authenticateUser, async (req, res) => {
-  const userId = req.user.id
-
-  if (hasSupabaseConfig()) {
-    const { data, error } = await supabase
-      .from('events')
-      .select('*')
-      .eq('user_id', userId)
-      .gte('created_at', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString())
-
-    if (error) {
-      return res.status(500).json({
-        error: 'Failed to fetch stats from Supabase',
-        details: error.message,
-      })
-    }
-
-    const summary = summarizeDaily(data || [])
-    return res.json({
-      source: 'supabase',
-      ...summary,
-    })
-  }
-
-  const dayAgo = Date.now() - 24 * 60 * 60 * 1000
-  const filtered = memoryStore.events.filter(
-    (event) => event.user_id === userId && new Date(event.created_at).getTime() >= dayAgo,
-  )
-
-  return res.json({
-    source: 'memory',
-    ...summarizeDaily(filtered),
-  })
-})
-
 function summarizeDaily(events) {
-  const messageCount = events.filter((event) => event.event_type === 'message_sent').length
+  const messageCount = events.filter((event) => event.event_type === 'message_sent' || event.event_type === 'openai_api_call').length
   const totalEstimatedTokens = events.reduce(
     (acc, event) => acc + (Number(event.estimated_tokens) || 0),
     0,
@@ -257,6 +231,106 @@ app.get('/api/user/api-key', authenticateUser, async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: 'Failed to fetch API key', details: err.message })
   }
+})
+
+// Proxy endpoint for OpenAI API calls with token tracking
+app.post('/api/openai/chat/completions', authenticateUser, async (req, res) => {
+  const userId = req.user.id
+  const { messages, model, temperature, top_p, max_tokens } = req.body
+
+  try {
+    if (!messages || !Array.isArray(messages)) {
+      return res.status(400).json({ error: 'messages array is required' })
+    }
+
+    if (!OpenAI) {
+      return res.status(500).json({ error: 'OpenAI SDK not installed' })
+    }
+
+    // Fetch user's API key
+    const { data, error: keyError } = await supabase
+      .from('users')
+      .select('openai_api_key')
+      .eq('id', userId)
+      .single()
+
+    if (keyError || !data?.openai_api_key) {
+      return res.status(400).json({ error: 'API key not configured' })
+    }
+
+    // Call OpenAI
+    const client = new OpenAI({ apiKey: data.openai_api_key })
+    const completion = await client.chat.completions.create({
+      model: model || 'gpt-4',
+      messages,
+      temperature,
+      top_p,
+      max_tokens,
+    })
+
+    // Track token usage
+    await supabase.from('events').insert({
+      id: randomUUID(),
+      user_id: userId,
+      event_type: 'openai_api_call',
+      message_char_count: JSON.stringify(messages).length,
+      estimated_tokens: (completion.usage?.prompt_tokens || 0) + (completion.usage?.completion_tokens || 0),
+      created_at: new Date().toISOString(),
+    })
+
+    res.json(completion)
+  } catch (err) {
+    console.error('OpenAI API error:', err.message)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+app.get('/api/stats/daily', authenticateUser, async (req, res) => {
+  const userId = req.user.id
+
+  if (hasSupabaseConfig()) {
+    let { data, error } = await supabase
+      .from('events')
+      .select('*')
+      .eq('user_id', userId)
+      .gte('created_at', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString())
+
+    if (error) {
+      return res.status(500).json({
+        error: 'Failed to fetch stats from Supabase',
+        details: error.message,
+      })
+    }
+
+    // If no events found and we're in local dev, try device ids
+    if ((!data || data.length === 0) && process.env.NODE_ENV !== 'production') {
+      const { data: deviceEvents } = await supabase
+        .from('events')
+        .select('*')
+        .like('user_id', 'device-%')
+        .gte('created_at', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString())
+      
+      if (deviceEvents && deviceEvents.length > 0) {
+        data = deviceEvents
+      }
+    }
+
+    const summary = summarizeDaily(data || [])
+    return res.json({
+      source: 'supabase',
+      ...summary,
+    })
+  }
+
+  const dayAgo = Date.now() - 24 * 60 * 60 * 1000
+  const filtered = memoryStore.events.filter(
+    (event) => event.user_id === userId && new Date(event.created_at).getTime() >= dayAgo,
+  )
+
+  return res.json({
+    source: 'memory',
+    ...summarizeDaily(filtered),
+  })
 })
 
 app.listen(PORT, () => {

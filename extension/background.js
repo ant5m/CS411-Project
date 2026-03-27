@@ -22,15 +22,66 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
 });
 
+// Fetch authenticated user ID from backend
+async function getAuthenticatedUserId() {
+  try {
+    // Try to get from extension storage cache
+    const stored = await new Promise((resolve) => {
+      chrome.storage.local.get('authenticatedUserId', (result) => {
+        resolve(result.authenticatedUserId);
+      });
+    });
+
+    if (stored) {
+      return stored;
+    }
+
+    // If not cached, return device ID
+    const response = await fetch(`${API_BASE_URL}/api/user/me`, {
+      headers: { 'Content-Type': 'application/json' },
+    });
+
+    if (response.ok) {
+      const data = await response.json();
+      if (data.userId) {
+        chrome.storage.local.set({ authenticatedUserId: data.userId });
+        return data.userId;
+      }
+    }
+  } catch (e) {
+    console.warn('Could not fetch authenticated user ID:', e.message);
+  }
+
+  // Fallback to device ID
+  let id = await new Promise((resolve) => {
+    chrome.storage.local.get('deviceId', (result) => {
+      resolve(result.deviceId);
+    });
+  });
+
+  if (!id) {
+    id = 'device-' + Date.now();
+    chrome.storage.local.set({ deviceId: id });
+  }
+
+  return id;
+}
+
 // Record event to API
 async function recordEvent(eventData) {
   try {
-    console.log('🌐 Sending to backend:', eventData);
+    const userId = await getAuthenticatedUserId();
+    const payload = {
+      userId,
+      ...eventData,
+    };
+
+    console.log('🌐 Sending to backend:', payload);
     
     const response = await fetch(`${API_BASE_URL}/api/events`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(eventData),
+      body: JSON.stringify(payload),
     });
 
     if (!response.ok) {
