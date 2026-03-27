@@ -1,0 +1,45 @@
+{
+  "manifest_version": 3,
+  "name": "ChatGPT Usage Tracker",
+  "version": "1.0.0",
+  "description": "Automatically track your ChatGPT usage",
+  "permissions": ["storage", "tabs"],
+  "host_permissions": [
+    "https://chatgpt.com/*",
+    "https://www.chatgpt.com/*",
+    "https://chat.openai.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://chatgpt.com/*",
+        "https://www.chatgpt.com/*",
+        "https://chat.openai.com/*"
+      ],
+      "js": ["injector.js"],
+      "run_at": "document_start"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "content-script.js",
+        "widget.js",
+        "widget.css"
+      ],
+      "matches": [
+        "https://chatgpt.com/*",
+        "https://www.chatgpt.com/*",
+        "https://chat.openai.com/*"
+      ]
+    }
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "ChatGPT Usage Tracker"
+  }
+}
+
