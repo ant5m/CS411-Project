@@ -20,78 +20,170 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       });
     return true; // Keep channel open for async response
   }
+
+  if (request.action === 'setAuthToken') {
+    const token = request.token;
+    const userId = request.userId;
+    console.log('🔐 Background: Received auth token for user:', userId);
+    console.log('🔐 Background: Token length:', token ? token.length : 0);
+    console.log('🔐 Background: Token preview:', token ? token.substring(0, 20) + '...' : 'null');
+    
+    // Store token in chrome.storage.sync (persists across device restarts)
+    chrome.storage.sync.set({ 
+      authToken: token,
+      authenticatedUserId: userId,
+      tokenSetAt: new Date().toISOString(),
+    }, () => {
+      console.log('✅ Background: Auth token stored in sync storage');
+      console.log('✅ Background: Now verifying storage read...');
+      
+      // Verify it was actually stored
+      chrome.storage.sync.get(['authToken', 'authenticatedUserId'], (result) => {
+        console.log('✅ Background: Verified storage contains:', {
+          hasAuthToken: !!result.authToken,
+          tokenLength: result.authToken ? result.authToken.length : 0,
+          userId: result.authenticatedUserId,
+        });
+      });
+      
+      sendResponse({ success: true, userId, message: 'Authentication successful' });
+    });
+    return true;
+  }
+
+  if (request.action === 'setUserId') {
+    const userId = request.userId;
+    console.log('🆔 Setting authenticated user ID:', userId);
+    chrome.storage.local.set({ 
+      authenticatedUserId: userId,
+      authenticatedUserSetAt: new Date().toISOString(),
+    }, () => {
+      console.log('✅ User ID stored:', userId);
+      sendResponse({ success: true, userId, message: 'Authenticated user set successfully' });
+    });
+    return true;
+  }
 });
 
-// Fetch authenticated user ID from backend
-async function getAuthenticatedUserId() {
+// Fetch authenticated user ID and token from storage
+async function getAuthenticatedUserIdAndToken() {
   try {
-    // Try to get from extension storage cache
-    const stored = await new Promise((resolve) => {
-      chrome.storage.local.get('authenticatedUserId', (result) => {
-        resolve(result.authenticatedUserId);
+    console.log('🔍 getAuthenticatedUserIdAndToken: Starting retrieval...');
+    
+    // Try to get from sync storage first (persists across device restarts)
+    const syncData = await new Promise((resolve) => {
+      console.log('🔍 getAuthenticatedUserIdAndToken: Calling chrome.storage.sync.get...');
+      chrome.storage.sync.get(['authToken', 'authenticatedUserId'], (result) => {
+        console.log('🔍 getAuthenticatedUserIdAndToken: Sync storage result:', {
+          hasAuthToken: !!result.authToken,
+          tokenLength: result.authToken ? result.authToken.length : 0,
+          userId: result.authenticatedUserId,
+          keys: Object.keys(result),
+        });
+        resolve(result);
       });
     });
 
-    if (stored) {
-      return stored;
+    if (syncData.authToken) {
+      console.log('✅ Using JWT token from sync storage');
+      return { 
+        userId: syncData.authenticatedUserId,
+        token: syncData.authToken,
+        source: 'sync'
+      };
     }
 
-    // If not cached, return device ID
-    const response = await fetch(`${API_BASE_URL}/api/user/me`, {
-      headers: { 'Content-Type': 'application/json' },
+    console.log('⚠️ No auth token in sync storage, checking local...');
+    
+    // Fall back to local storage
+    const localData = await new Promise((resolve) => {
+      chrome.storage.local.get('authenticatedUserId', (result) => {
+        console.log('🔍 Local storage result:', result);
+        resolve(result);
+      });
     });
 
-    if (response.ok) {
-      const data = await response.json();
-      if (data.userId) {
-        chrome.storage.local.set({ authenticatedUserId: data.userId });
-        return data.userId;
-      }
+    if (localData.authenticatedUserId) {
+      console.log('✅ Using userId from local storage');
+      return { 
+        userId: localData.authenticatedUserId,
+        token: null,
+        source: 'local'
+      };
     }
+
+    console.warn('⚠️ No authenticated user. Extension will track without auth.');
+    console.log('📊 Debug info - Sync storage contents:');
+    chrome.storage.sync.get(null, (allData) => {
+      console.log('🔍 All sync storage data:', allData);
+    });
+    
+    return { userId: null, token: null, source: 'none' };
   } catch (e) {
-    console.warn('Could not fetch authenticated user ID:', e.message);
+    console.warn('Could not fetch auth data:', e.message);
+    return { userId: null, token: null, source: 'none' };
   }
-
-  // Fallback to device ID
-  let id = await new Promise((resolve) => {
-    chrome.storage.local.get('deviceId', (result) => {
-      resolve(result.deviceId);
-    });
-  });
-
-  if (!id) {
-    id = 'device-' + Date.now();
-    chrome.storage.local.set({ deviceId: id });
-  }
-
-  return id;
 }
 
 // Record event to API
 async function recordEvent(eventData) {
   try {
-    const userId = await getAuthenticatedUserId();
+    // Get authenticated user ID and token
+    const { userId, token, source } = await getAuthenticatedUserIdAndToken();
+    
+    let finalUserId = userId;
+    
+    if (!finalUserId) {
+      // Fall back to device ID
+      finalUserId = await new Promise((resolve) => {
+        chrome.storage.local.get('deviceId', (result) => {
+          if (result.deviceId) {
+            resolve(result.deviceId);
+          } else {
+            const deviceId = 'device-' + Math.random().toString(36).substr(2, 9);
+            chrome.storage.local.set({ deviceId });
+            resolve(deviceId);
+          }
+        });
+      });
+      console.log('📱 Using device ID (no auth):', finalUserId);
+    } else {
+      console.log(`🔐 Using ${source} auth:`, finalUserId);
+    }
+
     const payload = {
-      userId,
+      userId: finalUserId,
       ...eventData,
     };
 
-    console.log('🌐 Sending to backend:', payload);
+    // Build headers with optional Authorization
+    const headers = {
+      'Content-Type': 'application/json',
+    };
+    
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+      console.log('🔐 Including JWT in request');
+    }
+
+    console.log('🌐 Sending to backend:', JSON.stringify(payload));
     
     const response = await fetch(`${API_BASE_URL}/api/events`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify(payload),
     });
 
     if (!response.ok) {
+      const errorText = await response.text();
+      console.error(`❌ HTTP ${response.status}:`, errorText);
       throw new Error(`HTTP ${response.status}`);
     }
 
     const data = await response.json();
-    console.log('💾 Saved to backend:', data);
+    console.log('✅ Event saved:', data);
     
-    // Update storage
+    // Update storage with stats
     chrome.storage.local.get(['eventCount', 'totalTokens'], (storageData) => {
       const newCount = (storageData.eventCount || 0) + 1;
       const newTokens = (storageData.totalTokens || 0) + (eventData.estimatedTokens || 0);
@@ -102,12 +194,12 @@ async function recordEvent(eventData) {
         lastEvent: new Date().toISOString(),
       });
       
-      console.log('📊 Updated storage:', { eventCount: newCount, totalTokens: newTokens });
+      console.log('📊 Stats updated - Events:', newCount, 'Tokens:', newTokens);
     });
     
     return true;
   } catch (e) {
-    console.error('❌ Error in recordEvent:', e);
+    console.error('❌ recordEvent failed:', e.message);
     throw e;
   }
 }
@@ -117,3 +209,18 @@ chrome.runtime.onInstalled.addListener((details) => {
     console.log('🔔 Extension installed');
   }
 });
+
+// Debug helper: Show which user is being tracked
+async function checkCurrentUser() {
+  const stored = await new Promise((resolve) => {
+    chrome.storage.local.get(['authenticatedUserId', 'deviceId', 'authenticatedUserSetAt'], (result) => {
+      resolve(result);
+    });
+  });
+  
+  console.log('🆔 CURRENT TRACKING USER:');
+  console.log('  Authenticated User ID:', stored.authenticatedUserId || 'NOT SET');
+  console.log('  Set At:', stored.authenticatedUserSetAt || '—');
+  console.log('  Device ID (fallback):', stored.deviceId || 'NOT SET');
+  console.log('  Using:', stored.authenticatedUserId ? '✅ AUTHENTICATED' : '⚠️ DEVICE ID FALLBACK');
+}

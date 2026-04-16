@@ -1,7 +1,15 @@
 // Popup script for extension UI
 
 // Load status on popup open
-document.addEventListener('DOMContentLoaded', loadStatus);
+document.addEventListener('DOMContentLoaded', () => {
+  loadStatus();
+  
+  // Set up dashboard button listener
+  const dashboardBtn = document.getElementById('dashboardBtn');
+  if (dashboardBtn) {
+    dashboardBtn.addEventListener('click', openDashboard);
+  }
+});
 
 async function loadStatus() {
   try {
@@ -24,10 +32,13 @@ async function loadStatus() {
 }
 
 function openDashboard() {
-  chrome.tabs.create({ url: 'http://localhost:3000' }, (tab) => {
+  const dashboardUrl = 'http://localhost:3000/dashboard';
+  console.log('Opening dashboard:', dashboardUrl);
+  
+  chrome.tabs.create({ url: dashboardUrl }, (tab) => {
     if (chrome.runtime.lastError) {
       console.error('Error opening dashboard:', chrome.runtime.lastError);
-      alert('Could not open dashboard. Make sure the frontend is running at http://localhost:3000');
+      alert('Could not open dashboard. Make sure it\'s running at ' + dashboardUrl);
     } else {
       console.log('Dashboard opened in tab:', tab.id);
     }
@@ -36,3 +47,9 @@ function openDashboard() {
 
 // Refresh stats every 2 seconds
 setInterval(loadStatus, 2000);
+
+// Also add listener if DOM is already loaded (shouldn't happen but just in case)
+const dashboardBtn = document.getElementById('dashboardBtn');
+if (dashboardBtn) {
+  dashboardBtn.addEventListener('click', openDashboard);
+}

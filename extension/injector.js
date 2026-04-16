@@ -21,6 +21,37 @@ window.addEventListener('message', (event) => {
       }
     });
   }
+  
+  // Handle authentication token from frontend
+  if (event.data.type === 'CHATGPT_TRACKER_AUTH') {
+    console.log('🔐 INJECTOR: AUTH TOKEN MESSAGE RECEIVED from webpage');
+    console.log('👤 INJECTOR: User ID:', event.data.userId);
+    console.log('🔑 INJECTOR: Token available:', !!event.data.token);
+    console.log('🔑 INJECTOR: Token length:', event.data.token ? event.data.token.length : 0);
+    console.log('🔑 INJECTOR: Token preview:', event.data.token ? event.data.token.substring(0, 20) + '...' : 'null');
+    
+    // Send acknowledgment back to the webpage
+    window.postMessage({
+      type: 'CHATGPT_TRACKER_AUTH_ACK',
+      userId: event.data.userId,
+    }, '*');
+    console.log('📨 INJECTOR: Acknowledgment sent back to webpage');
+    
+    // Forward to background worker
+    console.log('📤 INJECTOR: Forwarding to background worker...');
+    chrome.runtime.sendMessage({
+      action: 'setAuthToken',
+      token: event.data.token,
+      userId: event.data.userId,
+    }, (response) => {
+      if (chrome.runtime.lastError) {
+        console.error('❌ INJECTOR: Background error:', chrome.runtime.lastError.message);
+      } else {
+        console.log('✅ INJECTOR: Auth token forwarded to background worker');
+        console.log('✅ INJECTOR: Response:', response);
+      }
+    });
+  }
 });
 
 // Listen for storage changes and broadcast to page
@@ -54,11 +85,11 @@ function injectScript(filename) {
   script.src = chrome.runtime.getURL(filename);
   script.onload = () => {
     console.log(filename, 'injected');
-    this.remove();
+    script.remove();
   };
   script.onerror = () => {
     console.error('Failed to inject', filename);
-    this.remove();
+    script.remove();
   };
   (document.head || document.documentElement).appendChild(script);
 }
@@ -72,7 +103,7 @@ function injectStyles(filename) {
 
 // Expose test function for debugging
 window.testTracker = function() {
-  console.log('🧪 MANUAL TEST - Simulating event recording');
+  console.log(' MANUAL TEST - Simulating event recording');
   chrome.runtime.sendMessage({
     action: 'recordEvent',
     event: {
@@ -95,19 +126,32 @@ window.checkExtensionStorage = function() {
 };
 
 // Run immediately
-console.log('⏳ Starting injection...');
-setTimeout(() => {
-  injectStyles('widget.css');
-}, 0);
-setTimeout(() => {
-  injectScript('content-script.js');
-}, 10);
-setTimeout(() => {
-  injectScript('widget.js');
-}, 20);
-setTimeout(() => {
-  broadcastInitialStorageSnapshot();
-}, 30);
+console.log('⏳ Starting injector...');
 
-console.log('💡 Test commands: window.testTracker() or window.checkExtensionStorage()');
+// Only inject scripts on ChatGPT pages, not on local web app
+const isChatGPT = /chatgpt\.com|openai\.com/.test(window.location.hostname);
+console.log('🌐 Current page:', window.location.hostname);
+console.log('🤖 Is ChatGPT?', isChatGPT);
+
+if (isChatGPT) {
+  console.log('✅ ChatGPT detected - injecting message tracker');
+  setTimeout(() => {
+    // Disabled for now - causing React errors
+    // injectStyles('widget.css');
+  }, 0);
+  setTimeout(() => {
+    injectScript('content-script.js');
+  }, 10);
+  setTimeout(() => {
+    // Disabled for now - causing React errors
+    // injectScript('widget.js');
+  }, 20);
+  setTimeout(() => {
+    broadcastInitialStorageSnapshot();
+  }, 30);
+
+  console.log('💡 Test commands: window.testTracker() or window.checkExtensionStorage()');
+} else {
+  console.log('ℹ️ Not ChatGPT - postMessage listener active for auth token relay');
+}
 

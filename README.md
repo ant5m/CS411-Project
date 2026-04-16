@@ -1,201 +1,133 @@
-# ChatGPT Usage Tracker Skeleton
+# ChatGPT Usage Tracker - Browser Extension
 
-This workspace now contains a working frontend and backend skeleton:
+Automatically track your ChatGPT usage and monitor message counts, tokens, and session activity. This extension seamlessly integrates with your personal dashboard to provide real-time insights into your ChatGPT usage patterns.
 
-- `frontend`: Next.js dashboard
-- `backend`: Node.js/Express API (Supabase-ready)
+## Prerequisites
 
-## Project Structure
+Before installing the extension, make sure you have:
 
-```
-CS411-Project/
-	frontend/          # Next.js dashboard UI
-	backend/           # Express API + Supabase client bootstrap
-		src/
-			index.js
-			lib/supabase.js
-		supabase/schema.sql
-```
+1. **Node.js** (v16+) installed
+2. **Chrome/Chromium** browser
+3. **Backend running** at `http://localhost:4000`
+   ```bash
+   cd backend
+   npm install
+   npm start
+   ```
+4. **Frontend running** at `http://localhost:3000`
+   ```bash
+   cd frontend
+   npm install
+   npm run dev
+   ```
+5. **Supabase project** configured with the events table (see [backend README](../README.md))
 
-## 1) Backend Setup
+## Installation
 
-```bash
-cd backend
-cp .env.example .env
-npm install
-npm run dev
-```
+### Step 1: Load the Extension in Chrome
 
-Backend runs at `http://localhost:4000`.
+1. **Open Chrome Extensions page:**
 
-Health check:
+   - Navigate to `chrome://extensions/` in your address bar
+   - Toggle on **"Developer mode"** (top-right corner)
+2. **Load the unpacked extension:**
 
-```bash
-curl http://localhost:4000/health
-```
+   - Click **"Load unpacked"**
+   - Navigate to this project's `extension/` folder
+   - Select and open the folder
+   - The extension should now appear in your Chrome toolbar
 
-### Optional Supabase Wiring
+### Step 2: Sign In to the Dashboard
 
-In `backend/.env` set:
+1. **Open the dashboard:**
 
-```bash
-SUPABASE_URL=your-url
-# Use one of these server-side keys:
-SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
-SUPABASE_SECRET_KEY=your-secret-key
-```
+   - Go to `http://localhost:3000`
+   - Click **"Sign in with Google"** or use your email/password
+   - You'll be redirected to the dashboard
+2. **Navigate to Settings:**
 
-Then run `backend/supabase/schema.sql` in Supabase SQL editor to create the `events` table.
+   - Click **"Settings"** button in the top-right
+   - You should see **" Extension connected and tracking"** if the extension is enabled
 
-Quick steps to get these values:
+### Step 3: Start Tracking
 
-1. In Supabase, create a new project.
-2. Open `Project Settings -> API`.
-3. Copy `Project URL` into `SUPABASE_URL`.
-4. From `Publishable and secret API keys`, copy `Secret key` into `SUPABASE_SECRET_KEY`.
-5. (Optional legacy path) From `Legacy anon, service_role API keys`, copy `service_role` into `SUPABASE_SERVICE_ROLE_KEY`.
-6. Open `SQL Editor`, paste `backend/supabase/schema.sql`, and run it.
-7. Restart backend.
+1. **Go to ChatGPT:**
 
-Verify connection:
+   - Visit https://chatgpt.com
+   - Write and send messages normally
+2. **Watch the extension track:**
 
-```bash
-curl http://localhost:4000/api/supabase/status
-```
+   - Click the extension icon in your Chrome toolbar
+   - You'll see:
+     - Auto-tracking on
+     - Messages Tracked: `[count]`
+     - Last Event: `[timestamp]`
+3. **View your stats:**
 
-Expected success response:
+   - Click **"Open Dashboard"** in the extension popup
+   - Or go to `http://localhost:3000/dashboard`
+   - Your stats update every second
 
-```json
-{
-	"configured": true,
-	"reachable": true,
-	"table": "public.events"
-}
-```
+## API Base URL
 
-Without Supabase credentials, the backend stores events in memory for local development.
+If you're running the backend on a different port, update the API URL in `background.js`:
 
-## 2) Frontend Setup (Next.js)
-
-```bash
-cd frontend
-cp .env.local.example .env.local
-npm install
-npm run dev
+```javascript
+const API_BASE_URL = "http://localhost:4000"; // Change port if needed
 ```
 
-Frontend runs at `http://localhost:3000` and requests daily stats from the backend.
+After making changes, reload the extension at `chrome://extensions/`.
 
-## 3) Authentication Setup
+### CORS Configuration
 
-### Database Schema
+The backend automatically allows requests from:
 
-Run both SQL scripts in Supabase SQL Editor to set up user management:
+- `http://localhost:3000`
+- `http://127.0.0.1:3000`
+- `https://chat.openai.com` and ChatGPT domains
 
-1. `backend/supabase/schema.sql` (events table)
-2. `backend/supabase/users_schema.sql` (users table for API keys)
+If you're accessing from a different origin, add it to `backend/.env`:
 
-### Enable Supabase Auth
-
-In Supabase project:
-
-1. Go to `Authentication -> Providers`
-2. Enable `Email` provider
-3. Configure email settings if needed
-
-### Google OAuth Setup (Optional - BU-Restricted)
-
-To enable "Sign in with Google" (restricted to @bu.edu emails):
-
-1. **Get Google OAuth Credentials:**
-   - Go to [Google Cloud Console](https://console.cloud.google.com/)
-   - Create a new OAuth 2.0 application
-   - Set redirect URI to: `https://your-project.supabase.co/auth/v1/callback`
-   - Copy Client ID and Client Secret
-
-2. **Add to Supabase:**
-   - Go to `Authentication -> Providers -> Google`
-   - Enable the provider
-   - Paste Client ID and Client Secret
-   - Save
-
-3. **Domain Restriction:**
-   - Only users with @bu.edu email addresses can sign in/sign up
-   - This is enforced on the frontend via `/auth/callback` page
-   - If a user tries to sign in with a non-@bu.edu email, they're automatically signed out with an error message
-   - The sign-up form also validates and disables submission for non-@bu.edu emails
-
-### User Registration Flow
-
-- Users can sign up via:
-  - **Google OAuth** (requires @bu.edu email) at `/sign-in` or `/sign-up`
-  - **Email/Password** (requires @bu.edu email)
-- Users sign in at `/sign-in`
-- After auth, users access dashboard at `/dashboard`
-- Users can manage their OpenAI API key at `/settings`
-- API keys are encrypted and stored per-user in Supabase
-
-### API Endpoints (Auth Required)
-
-- `GET /api/user/api-key` - Fetch user's masked API key
-- `POST /api/user/api-key` - Save user's OpenAI API key
-- `GET /api/stats/daily` - Get stats for authenticated user
-
-## 4) Browser Extension Setup
-
-The extension automatically tracks ChatGPT usage (messages, tokens, session duration).
-
-### Install Extension (Chrome)
-
-1. Go to `chrome://extensions/`
-2. Enable **"Developer mode"** (top-right toggle)
-3. Click **"Load unpacked"**
-4. Select the `extension/` folder
-5. Extension appears in your toolbar
-
-### Configure Extension (API token is mandatory)
-
-> ⚠️ Tracking is blocked until the extension knows who you are. Generate a Supabase auth token from the dashboard and save it in the popup — anonymous traffic is discarded.
-
-1. Click the extension icon
-2. Sign in at http://localhost:3000 and open **Settings → API Token**
-3. Copy the token and paste it into the extension popup
-4. Click **"Save"** (you’ll get a confirmation toast when the token is stored)
-
-### Start Tracking
-
-- Go to https://chatgpt.com
-- Send messages normally
-- Extension captures each message and posts to `POST /api/events`
-- View stats on dashboard at `http://localhost:3000/dashboard`
-
-### What Gets Tracked
-
-- ✅ Message character count
-- ✅ Estimated tokens (characters ÷ 4)
-- ✅ Session ID (groups messages by conversation)
-- ✅ Timestamp
-- ✅ User ID (from auth token)
-
-See [extension/README.md](extension/README.md) for detailed extension documentation.
-
-## Current API Endpoints
-
-- `GET /health`
-- `GET /api/supabase/status`
-- `POST /api/events` - Record tracked event
-- `GET /api/stats/daily` (auth required) - Get daily stats
-- `GET /api/user/api-key` (auth required) - Get user's masked API key
-- `POST /api/user/api-key` (auth required) - Save user's OpenAI API key
-
-## Example Event Payload
-
-```json
-{
-	"userId": "user-id-from-auth",
-	"eventType": "message_sent",
-	"messageCharCount": 120,
-	"estimatedTokens": 30,
-	"sessionId": "4f0df8f5-3127-4c8c-9b7b-2d26eef3f37a"
-}
+```env
+ADDITIONAL_ALLOWED_ORIGINS=http://your-origin:3000
 ```
+
+## Data Flow
+
+```
+ChatGPT Website
+       ↓
+   Content Script
+       ↓
+   Injector (Extension Bridge)
+       ↓
+  Background Worker
+       ↓
+  Backend API (localhost:4000)
+       ↓
+  Supabase Database
+```
+
+### Components
+
+- **Content Script** (`content-script.js`)
+
+  - Detects messages sent on ChatGPT
+  - Calculates message length and token estimates
+  - Sends events to the background worker
+- **Injector** (`injector.js`)
+
+  - Bridges between content script and background worker
+  - Handles authentication token from the dashboard
+  - Manages storage and state
+- **Background Worker** (`background.js`)
+
+  - Receives tracked events from the injector
+  - Sends events to your backend API
+  - Maintains extension state and storage
+  - Tracks authentication tokens
+- **Popup UI** (`popup.html` / `popup.js`)
+
+  - Displays real-time tracking stats
+  - Shows extension status
+  - Quick link to open dashboard

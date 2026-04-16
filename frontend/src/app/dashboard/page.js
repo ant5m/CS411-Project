@@ -30,6 +30,23 @@ export default function Dashboard() {
 
     if (user) {
       loadStats()
+      
+      // Set up polling to refresh stats every 1 second
+      const pollInterval = setInterval(() => {
+        loadStats()
+      }, 1000)
+      
+      // Also refresh when page comes into focus
+      const handleFocus = () => {
+        console.log('📊 Dashboard refocused - updating stats');
+        loadStats()
+      }
+      window.addEventListener('focus', handleFocus)
+      
+      return () => {
+        clearInterval(pollInterval)
+        window.removeEventListener('focus', handleFocus)
+      }
     }
   }, [user, authLoading, router])
 
