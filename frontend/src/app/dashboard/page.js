@@ -1,10 +1,11 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import Image from 'next/image'
+import Link from 'next/link'
+import { useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { useAuth } from '@/lib/auth-context'
 import { supabase } from '@/lib/supabase'
-import Link from 'next/link'
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:4000'
 
@@ -14,13 +15,19 @@ const initialStats = {
   activeMinutes: 0,
   totalEstimatedTokens: 0,
   productivityInsight: 'No insight yet.',
+  source: 'unknown',
 }
 
 export default function Dashboard() {
   const { user, loading: authLoading } = useAuth()
   const router = useRouter()
+
   const [stats, setStats] = useState(initialStats)
   const [status, setStatus] = useState('Loading...')
+  const [selectedRange, setSelectedRange] = useState('today')
+  const [showBenchmark, setShowBenchmark] = useState(false)
+  const [isSyncing, setIsSyncing] = useState(false)
+  const [lastSync, setLastSync] = useState('Not synced yet')
 
   useEffect(() => {
     if (!authLoading && !user) {
@@ -30,19 +37,17 @@ export default function Dashboard() {
 
     if (user) {
       loadStats()
-      
-      // Set up polling to refresh stats every 1 second
+
       const pollInterval = setInterval(() => {
         loadStats()
-      }, 1000)
-      
-      // Also refresh when page comes into focus
+      }, 3000)
+
       const handleFocus = () => {
-        console.log('📊 Dashboard refocused - updating stats');
         loadStats()
       }
+
       window.addEventListener('focus', handleFocus)
-      
+
       return () => {
         clearInterval(pollInterval)
         window.removeEventListener('focus', handleFocus)
@@ -52,69 +57,454 @@ export default function Dashboard() {
 
   const loadStats = async () => {
     try {
+      setIsSyncing(true)
+
       const session = await supabase.auth.getSession()
       const response = await fetch(`${API_BASE_URL}/api/stats/daily`, {
         headers: {
-          'Authorization': `Bearer ${session.data.session?.access_token}`,
+          Authorization: `Bearer ${session.data.session?.access_token}`,
         },
       })
 
       if (!response.ok) throw new Error(`HTTP ${response.status}`)
 
       const data = await response.json()
-      setStats(data)
+
+      setStats({
+        date: data.date ?? '-',
+        messageCount: data.messageCount ?? 0,
+        activeMinutes: data.activeMinutes ?? 0,
+        totalEstimatedTokens: data.totalEstimatedTokens ?? 0,
+        productivityInsight: data.productivityInsight ?? 'No insight yet.',
+        source: data.source ?? 'unknown',
+      })
+
       setStatus(`Connected (${data.source || 'unknown'})`)
+      setLastSync('just now')
     } catch (err) {
+      console.error('Failed to load dashboard data:', err)
       setStatus(`Error: ${err.message}`)
+    } finally {
+      setIsSyncing(false)
     }
   }
 
+  const hasData =
+    Number(stats.messageCount) > 0 ||
+    Number(stats.activeMinutes) > 0 ||
+    Number(stats.totalEstimatedTokens) > 0
+
+  const derivedStats = useMemo(() => {
+    const multiplier =
+      selectedRange === 'today' ? 1 : selectedRange === 'week' ? 7 : 30
+
+    const messageCount = Math.round((Number(stats.messageCount) || 0) * multiplier)
+    const activeMinutes = Math.round((Number(stats.activeMinutes) || 0) * multiplier)
+    const totalEstimatedTokens = Math.round(
+      (Number(stats.totalEstimatedTokens) || 0) * multiplier
+    )
+
+    const estimatedCO2 = ((totalEstimatedTokens / 1000) * 0.35).toFixed(2)
+
+    const label =
+      selectedRange === 'today'
+        ? 'Today'
+        : selectedRange === 'week'
+        ? '7 Days'
+        : '30 Days'
+
+    return {
+      label,
+      messageCount,
+      activeMinutes,
+      totalEstimatedTokens,
+      estimatedCO2,
+      trend: buildTrendArray(totalEstimatedTokens, selectedRange, hasData),
+      avgTrend: buildAverageTrend(selectedRange),
+      labels: getTrendLabels(selectedRange),
+    }
+  }, [stats, selectedRange, hasData])
+
+  const buddyState = useMemo(() => {
+    const tokens = Number(derivedStats.totalEstimatedTokens || 0)
+
+    if (!hasData || tokens === 0) {
+      return {
+        health: 'Unknown',
+        mood: 'Neutral',
+        impact: 'Limited Activity',
+        badge: '🌱 Limited Activity',
+        image: '/neutral_buddy.png',
+        summary:
+          'Buddy does not have enough recent activity yet to show a stronger response.',
+      }
+    }
+
+    if (tokens < 1500) {
+      return {
+        health: 'Good',
+        mood: 'Happy',
+        impact: 'Low Impact',
+        badge: '🌱 Low Impact',
+        image: '/good_buddy.png',
+        summary:
+          'Buddy is doing well because your recent tracked usage is staying in a lower-impact range.',
+      }
+    }
+
+    if (tokens < 6000) {
+      return {
+        health: 'Fair',
+        mood: 'Tired',
+        impact: 'Moderate Impact',
+        badge: '🍃 Moderate Impact',
+        image: '/neutral_buddy.png',
+        summary:
+          'Buddy is starting to feel the effects of increased usage and is now in a moderate-impact state.',
+      }
+    }
+
+    return {
+      health: 'Low',
+      mood: 'Stressed',
+      impact: 'High Impact',
+      badge: '🌍 High Impact',
+      image: '/poor_buddy.png',
+      summary:
+        'Buddy is stressed because recent tracked usage is high enough to indicate a stronger environmental impact.',
+    }
+  }, [derivedStats, hasData])
+
   if (authLoading) {
-    return <div className="min-h-screen bg-slate-100 flex items-center justify-center">Loading...</div>
+    return (
+      <div className="min-h-screen bg-[#eef8f2] flex items-center justify-center text-slate-700">
+        Loading...
+      </div>
+    )
   }
 
   return (
-    <main className="min-h-screen bg-slate-100 p-6 text-slate-900 sm:p-10">
-      <div className="mx-auto max-w-5xl space-y-6">
-        <header className="rounded-2xl bg-white p-6 shadow-sm">
-          <div className="flex justify-between items-start">
+    <main className="min-h-screen bg-[#eef8f2] px-5 py-8 text-slate-800 sm:px-8">
+      <div className="mx-auto max-w-7xl space-y-6">
+        <section className="rounded-[2rem] border border-[#d7eee2] bg-white px-7 py-6 shadow-[0_4px_18px_rgba(35,83,61,0.06)]">
+          <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
             <div>
-              <h1 className="text-3xl font-bold">ChatGPT Usage Dashboard</h1>
-              <p className="mt-2 text-sm text-slate-600">
-                Track your API usage and get productivity insights.
+              <p className="text-sm font-semibold uppercase tracking-[0.16em] text-[#2d9b72]">
+                TamagotGPT
               </p>
-              <p className="mt-3 text-sm font-medium text-emerald-700">{status}</p>
+              <h1 className="mt-2 text-4xl font-bold tracking-tight text-slate-900">
+                Sustainability Dashboard
+              </h1>
+              <p className="mt-3 max-w-2xl text-lg text-slate-500">
+                Track AI usage, estimated environmental impact, and Buddy status in one place.
+              </p>
+              <p className="mt-4 text-sm font-medium text-emerald-700">{status}</p>
             </div>
-            <Link
-              href="/settings"
-              className="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700"
-            >
-              Settings
-            </Link>
-          </div>
-        </header>
 
-        <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <Card title="Date" value={stats.date} />
-          <Card title="Messages Today" value={String(stats.messageCount)} />
-          <Card title="Active Minutes" value={String(stats.activeMinutes)} />
-          <Card title="Estimated Tokens" value={String(stats.totalEstimatedTokens)} />
+            <div className="flex flex-col gap-3 lg:items-end">
+              <div className="min-w-[220px] rounded-[1.35rem] border border-[#c9eadc] bg-[#dff3e9] px-5 py-4">
+                <p className="text-xl font-semibold text-[#145c43]">
+                  {isSyncing ? 'Syncing...' : 'System synced'}
+                </p>
+                <p className="mt-2 text-base text-slate-500">Last sync: {lastSync}</p>
+              </div>
+
+              <div className="flex flex-wrap gap-3">
+                <button
+                  onClick={loadStats}
+                  disabled={isSyncing}
+                  className="rounded-full bg-[#0ea56a] px-5 py-3 text-base font-semibold text-white transition hover:bg-[#0c935f] disabled:cursor-not-allowed disabled:bg-[#8ed8bc]"
+                >
+                  {isSyncing ? 'Syncing...' : 'Sync now'}
+                </button>
+
+                <Link
+                  href="/settings"
+                  className="rounded-full border border-[#d7e3ef] bg-[#f8fafc] px-5 py-3 text-base font-semibold text-slate-600 transition hover:bg-slate-50"
+                >
+                  Settings
+                </Link>
+              </div>
+            </div>
+          </div>
         </section>
 
-        <section className="rounded-2xl bg-white p-6 shadow-sm">
-          <h2 className="text-lg font-semibold">Productivity Insight</h2>
-          <p className="mt-2 text-slate-700">{stats.productivityInsight}</p>
+        <section className="rounded-[2rem] border border-[#d7eee2] bg-white px-7 py-6 shadow-[0_4px_18px_rgba(35,83,61,0.06)]">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+            <div>
+              <h2 className="text-2xl font-bold text-slate-900">Usage Overview</h2>
+              <p className="mt-1 text-lg text-slate-500">
+                Select a time range to update the dashboard metrics.
+              </p>
+            </div>
+
+            <div className="inline-flex rounded-full bg-[#d7f1e4] p-1.5">
+              <RangeButton
+                label="Today"
+                isActive={selectedRange === 'today'}
+                onClick={() => setSelectedRange('today')}
+              />
+              <RangeButton
+                label="7 Days"
+                isActive={selectedRange === 'week'}
+                onClick={() => setSelectedRange('week')}
+              />
+              <RangeButton
+                label="30 Days"
+                isActive={selectedRange === 'month'}
+                onClick={() => setSelectedRange('month')}
+              />
+            </div>
+          </div>
+
+          <div className="mt-7 grid gap-5 md:grid-cols-2 xl:grid-cols-4">
+            <MetricCard
+              accent="bg-[#2fd37c]"
+              icon="💬"
+              label="Messages"
+              value={hasData ? derivedStats.messageCount : '—'}
+              sublabel="tracked prompts"
+            />
+            <MetricCard
+              accent="bg-[#53a8ff]"
+              icon="⏱️"
+              label="Active Minutes"
+              value={hasData ? derivedStats.activeMinutes : '—'}
+              sublabel="estimated session time"
+            />
+            <MetricCard
+              accent="bg-[#f3c14b]"
+              icon="🧠"
+              label="Estimated Tokens"
+              value={hasData ? derivedStats.totalEstimatedTokens : '—'}
+              sublabel="usage volume"
+            />
+            <MetricCard
+              accent="bg-[#2fd37c]"
+              icon="🌍"
+              label="Estimated CO₂"
+              value={hasData ? `${derivedStats.estimatedCO2} g` : '—'}
+              sublabel={derivedStats.label}
+            />
+          </div>
+
+          {!hasData ? (
+            <div className="mt-7 rounded-[1.6rem] border border-dashed border-[#c9dad1] bg-[#f7fcf9] p-6 text-center">
+              <h3 className="text-xl font-bold text-slate-900">No Data Found</h3>
+              <p className="mt-2 text-lg text-slate-500">
+                No recorded usage exists yet. Send an AI prompt first, then return to the dashboard.
+              </p>
+            </div>
+          ) : (
+            <div className="mt-7 rounded-[1.6rem] border border-[#d7eee2] bg-[#f7fcf9] p-5">
+              <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                <div>
+                  <h3 className="text-xl font-bold text-slate-900">Impact Trend</h3>
+                  <p className="text-sm text-slate-500">
+                    Estimated environmental impact for the selected range.
+                  </p>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setShowBenchmark((prev) => !prev)}
+                  className="rounded-full border border-[#d7eee2] bg-white px-4 py-2 text-sm font-medium text-slate-600 transition hover:bg-[#f2fbf6]"
+                >
+                  {showBenchmark ? 'Hide Average' : 'Compare to Average'}
+                </button>
+              </div>
+
+              <div className="mt-5">
+                <TrendChart
+                  values={derivedStats.trend}
+                  average={showBenchmark ? derivedStats.avgTrend : null}
+                  labels={derivedStats.labels}
+                />
+              </div>
+            </div>
+          )}
+        </section>
+
+        <section className="grid gap-6 lg:grid-cols-[1.05fr_0.95fr]">
+          <div className="rounded-[2rem] border border-[#d7eee2] bg-white px-7 py-6 shadow-[0_4px_18px_rgba(35,83,61,0.06)]">
+            <h2 className="text-2xl font-bold text-slate-900">Productivity Insight</h2>
+            <p className="mt-3 text-lg leading-8 text-slate-500">
+              {hasData
+                ? stats.productivityInsight
+                : 'No insight yet. Once usage is recorded, the system will generate an insight here.'}
+            </p>
+
+            <div className="mt-6 rounded-[1.4rem] border border-[#d7eee2] bg-[#f7fcf9] p-4 text-sm text-slate-600">
+              Source: {stats.source || 'unknown'} • Date: {stats.date || '-'}
+            </div>
+          </div>
+
+          <div className="rounded-[2rem] border border-[#d7eee2] bg-white px-7 py-6 shadow-[0_4px_18px_rgba(35,83,61,0.06)]">
+            <h2 className="text-2xl font-bold text-slate-900">Buddy Summary</h2>
+            <p className="mt-2 text-lg text-slate-500">
+              Current Buddy status for the {derivedStats.label} range.
+            </p>
+
+            <div className="mt-5 grid gap-4 md:grid-cols-[0.95fr_1.05fr]">
+              <div className="relative h-56 overflow-hidden rounded-[1.6rem] bg-gradient-to-br from-[#eef8f2] to-[#f7fcf9]">
+                <Image
+                  src={buddyState.image}
+                  alt="Buddy visual state"
+                  fill
+                  className="object-contain p-5"
+                  priority
+                />
+              </div>
+
+              <div className="space-y-4">
+                <div className="flex flex-wrap gap-3">
+                  <InfoPill label={`Health: ${buddyState.health}`} />
+                  <InfoPill label={`Mood: ${buddyState.mood}`} />
+                  <InfoPill label={buddyState.badge} />
+                </div>
+
+                <div className="rounded-[1.4rem] border border-[#d7eee2] bg-[#f7fcf9] p-4">
+                  <p className="text-base leading-7 text-slate-600">{buddyState.summary}</p>
+                </div>
+
+                <Link
+                  href="/buddy"
+                  className="inline-flex items-center justify-center rounded-full bg-[#0ea56a] px-5 py-3 text-base font-semibold text-white transition hover:bg-[#0c935f]"
+                >
+                  Open Buddy
+                </Link>
+              </div>
+            </div>
+          </div>
         </section>
       </div>
     </main>
   )
 }
 
-function Card({ title, value }) {
+function buildTrendArray(baseValue, selectedRange, hasData) {
+  if (!hasData) return [0.2, 0.1, 0.15, 0.12, 0.1, 0.08, 0.14]
+
+  const value = Number(baseValue || 0)
+
+  if (selectedRange === 'today') {
+    return [
+      Math.max(0.5, value * 0.45),
+      Math.max(0.5, value * 0.8),
+      Math.max(0.5, value * 0.6),
+      Math.max(0.5, value * 1.0),
+      Math.max(0.5, value * 0.7),
+      Math.max(0.5, value * 0.9),
+      Math.max(0.5, value * 0.75),
+    ]
+  }
+
+  if (selectedRange === 'week') {
+    return [
+      Math.max(1, value * 0.7),
+      Math.max(1, value * 1.0),
+      Math.max(1, value * 0.85),
+      Math.max(1, value * 1.1),
+      Math.max(1, value * 0.95),
+      Math.max(1, value * 0.8),
+      Math.max(1, value * 1.05),
+    ]
+  }
+
+  return [
+    Math.max(2, value * 0.65),
+    Math.max(2, value * 0.8),
+    Math.max(2, value * 0.75),
+    Math.max(2, value * 0.95),
+    Math.max(2, value * 1.1),
+    Math.max(2, value * 1.0),
+    Math.max(2, value * 1.05),
+  ]
+}
+
+function buildAverageTrend(selectedRange) {
+  if (selectedRange === 'today') return [2, 2, 2, 2, 2, 2, 2]
+  if (selectedRange === 'week') return [5, 5, 5, 5, 5, 5, 5]
+  return [14, 14, 14, 14, 14, 14, 14]
+}
+
+function getTrendLabels(selectedRange) {
+  if (selectedRange === 'today') return ['1', '2', '3', '4', '5', '6', '7']
+  if (selectedRange === 'week') return ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+  return ['W1', 'W2', 'W3', 'W4', 'W5', 'W6', 'W7']
+}
+
+function RangeButton({ label, isActive, onClick }) {
   return (
-    <article className="rounded-2xl bg-white p-5 shadow-sm">
-      <h3 className="text-sm font-medium text-slate-500">{title}</h3>
-      <p className="mt-2 text-2xl font-bold">{value}</p>
-    </article>
+    <button
+      type="button"
+      onClick={onClick}
+      className={`rounded-full px-6 py-3 text-lg font-medium transition ${
+        isActive
+          ? 'bg-[#2fd37c] text-white shadow-sm'
+          : 'text-slate-600 hover:bg-[#cdeedd]'
+      }`}
+    >
+      {label}
+    </button>
+  )
+}
+
+function MetricCard({ accent, icon, label, value, sublabel }) {
+  return (
+    <div className="overflow-hidden rounded-[1.7rem] border border-[#dbece3] bg-white shadow-[0_2px_10px_rgba(35,83,61,0.04)]">
+      <div className={`h-2 w-full ${accent}`} />
+      <div className="p-5">
+        <p className="text-[1.05rem] font-medium text-slate-500">
+          {icon} {label}
+        </p>
+        <p className="mt-4 text-4xl font-bold tracking-tight text-slate-900">
+          {value}
+        </p>
+        <p className="mt-3 text-base text-slate-400">{sublabel}</p>
+      </div>
+    </div>
+  )
+}
+
+function InfoPill({ label }) {
+  return (
+    <div className="rounded-full border border-[#cfe8dc] bg-[#e6f6ee] px-4 py-2 text-base font-medium text-slate-700">
+      {label}
+    </div>
+  )
+}
+
+function TrendChart({ values, average, labels }) {
+  const maxValue = Math.max(...values, ...(average || [0]), 1)
+
+  return (
+    <div className="space-y-3">
+      <div className="flex h-44 items-end gap-3">
+        {values.map((value, index) => (
+          <div key={index} className="flex flex-1 flex-col items-center gap-2">
+            <div className="relative flex h-36 w-full items-end justify-center rounded-[1rem] bg-white">
+              {average && (
+                <div
+                  className="absolute left-0 right-0 border-t-2 border-dashed border-[#f3c14b]"
+                  style={{ bottom: `${(average[index] / maxValue) * 100}%` }}
+                />
+              )}
+              <div
+                className="w-8 rounded-t-[0.8rem] bg-[#2fd37c]"
+                style={{ height: `${(value / maxValue) * 100}%` }}
+              />
+            </div>
+            <span className="text-xs text-slate-400">{labels?.[index] || index + 1}</span>
+          </div>
+        ))}
+      </div>
+
+      {average && (
+        <p className="text-xs text-slate-400">
+          Dashed line = average user benchmark
+        </p>
+      )}
+    </div>
   )
 }
