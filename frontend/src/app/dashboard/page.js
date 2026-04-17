@@ -476,35 +476,88 @@ function InfoPill({ label }) {
 }
 
 function TrendChart({ values, average, labels }) {
-  const maxValue = Math.max(...values, ...(average || [0]), 1)
+  const maxValue = Math.max(...values, ...(average || [0]), 1);
+  const width = 1000; // SVG coordinate system width
+  const height = 200; // SVG coordinate system height
+  const padding = 40;
+
+  // Helper to calculate SVG coordinates
+  const getCoordinates = (data) => {
+    return data.map((val, i) => {
+      const x = (i / (data.length - 1)) * (width - padding * 2) + padding;
+      const y = height - (val / maxValue) * (height - padding * 2) - padding;
+      return { x, y };
+    });
+  };
+
+  const points = getCoordinates(values);
+  const avgPoints = average ? getCoordinates(average) : null;
+
+  // Format points for the SVG polyline attribute
+  const pointsStr = points.map(p => `${p.x},${p.y}`).join(' ');
+  const avgPointsStr = avgPoints ? avgPoints.map(p => `${p.x},${p.y}`).join(' ') : '';
 
   return (
-    <div className="space-y-3">
-      <div className="flex h-44 items-end gap-3">
-        {values.map((value, index) => (
-          <div key={index} className="flex flex-1 flex-col items-center gap-2">
-            <div className="relative flex h-36 w-full items-end justify-center rounded-[1rem] bg-white">
-              {average && (
-                <div
-                  className="absolute left-0 right-0 border-t-2 border-dashed border-[#f3c14b]"
-                  style={{ bottom: `${(average[index] / maxValue) * 100}%` }}
-                />
-              )}
-              <div
-                className="w-8 rounded-t-[0.8rem] bg-[#2fd37c]"
-                style={{ height: `${(value / maxValue) * 100}%` }}
-              />
-            </div>
-            <span className="text-xs text-slate-400">{labels?.[index] || index + 1}</span>
-          </div>
-        ))}
+    <div className="space-y-4">
+      <div className="relative h-56 w-full rounded-[1.6rem] bg-white p-4">
+        <svg
+          viewBox={`0 0 ${width} ${height}`}
+          className="h-full w-full overflow-visible"
+          preserveAspectRatio="none"
+        >
+          {/* Average Benchmark Line (Dashed) */}
+          {average && (
+            <polyline
+              points={avgPointsStr}
+              fill="none"
+              stroke="#f3c14b"
+              strokeWidth="3"
+              strokeDasharray="8,8"
+              className="transition-all duration-500"
+            />
+          )}
+
+          {/* Main Data Line */}
+          <polyline
+            points={pointsStr}
+            fill="none"
+            stroke="#2fd37c"
+            strokeWidth="6"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className="transition-all duration-500"
+          />
+
+          {/* Data Points (Dots) */}
+          {points.map((p, i) => (
+            <circle
+              key={i}
+              cx={p.x}
+              cy={p.y}
+              r="8"
+              fill="white"
+              stroke="#2fd37c"
+              strokeWidth="4"
+            />
+          ))}
+        </svg>
+
+        {/* X-Axis Labels */}
+        <div className="absolute bottom-2 left-0 right-0 flex justify-between px-[4%]">
+          {labels.map((label, i) => (
+            <span key={i} className="text-xs font-medium text-slate-400">
+              {label}
+            </span>
+          ))}
+        </div>
       </div>
 
       {average && (
-        <p className="text-xs text-slate-400">
-          Dashed line = average user benchmark
-        </p>
+        <div className="flex items-center gap-2">
+          <div className="h-0.5 w-8 border-t-2 border-dashed border-[#f3c14b]" />
+          <p className="text-xs text-slate-400">Average user benchmark</p>
+        </div>
       )}
     </div>
-  )
+  );
 }
