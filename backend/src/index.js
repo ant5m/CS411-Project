@@ -413,6 +413,96 @@ app.get('/api/stats/daily', authenticateUser, async (req, res) => {
   }
 })
 
+// Get user's personal average for their own benchmark
+app.get('/api/stats/user-average', authenticateUser, async (req, res) => {
+  const userId = req.user.id
+  const daysBack = Number(req.query.daysBack) || 30 // Default: last 30 days
+
+  console.log('📊 User average request:', { userId, daysBack })
+
+  try {
+    if (!hasSupabaseConfig()) {
+      return res.json({
+        avgTokensPerDay: 1000,
+        avgMessagesPerDay: 8,
+        totalDays: 0,
+        source: 'defaults',
+      })
+    }
+
+    // Fetch user's events over the specified period
+    const cutoffTime = new Date(Date.now() - daysBack * 24 * 60 * 60 * 1000).toISOString()
+    
+    const { data: userEvents, error } = await supabase
+      .from('events')
+      .select('*')
+      .eq('user_id', userId)
+      .gte('created_at', cutoffTime)
+
+    if (error) {
+      console.warn('⚠️ Error fetching user events:', error.message)
+      return res.json({
+        avgTokensPerDay: 1000,
+        avgMessagesPerDay: 8,
+        totalDays: 0,
+        source: 'defaults',
+      })
+    }
+
+    if (!userEvents || userEvents.length === 0) {
+      return res.json({
+        avgTokensPerDay: 1000,
+        avgMessagesPerDay: 8,
+        totalDays: 0,
+        source: 'no-data',
+      })
+    }
+
+    // Group events by day
+    const dayStats = {}
+    userEvents.forEach(event => {
+      const day = event.created_at.split('T')[0] // YYYY-MM-DD
+      if (!dayStats[day]) {
+        dayStats[day] = { messageCount: 0, totalTokens: 0 }
+      }
+      if (event.event_type === 'message_sent') {
+        dayStats[day].messageCount += 1
+      }
+      dayStats[day].totalTokens += Number(event.estimated_tokens) || 0
+    })
+
+    const activeDays = Object.keys(dayStats).length
+    let totalMessages = 0
+    let totalTokens = 0
+
+    Object.values(dayStats).forEach(stat => {
+      totalMessages += stat.messageCount
+      totalTokens += stat.totalTokens
+    })
+
+    const avgMessagesPerDay = activeDays > 0 ? Math.round(totalMessages / activeDays) : 0
+    const avgTokensPerDay = activeDays > 0 ? Math.round(totalTokens / activeDays) : 0
+
+    console.log('📊 User average calculated:', { userId, activeDays, avgMessagesPerDay, avgTokensPerDay })
+
+    return res.json({
+      avgTokensPerDay,
+      avgMessagesPerDay,
+      activeDays,
+      totalDays: daysBack,
+      source: 'calculated',
+    })
+  } catch (err) {
+    console.error('❌ Error in /api/stats/user-average:', err)
+    return res.json({
+      avgTokensPerDay: 1000,
+      avgMessagesPerDay: 8,
+      totalDays: 0,
+      source: 'error',
+    })
+  }
+})
+
 // Get average stats across all users for benchmarking
 app.get('/api/stats/averages', authenticateUser, async (req, res) => {
   try {

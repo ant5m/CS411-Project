@@ -156,7 +156,7 @@ export default function BuddyPage() {
         return
       }
 
-      const response = await fetch(`${API_BASE_URL}/api/stats/averages`, {
+      const response = await fetch(`${API_BASE_URL}/api/stats/user-average`, {
         headers: {
           Authorization: `Bearer ${token}`,
         },
@@ -165,13 +165,13 @@ export default function BuddyPage() {
       if (response.ok) {
         const data = await response.json()
         setAverages({
-          messageCount: data.avgMessages || 12,
-          activeMinutes: data.avgMinutes || 18,
-          totalTokens: data.avgTokens || 2500,
+          messageCount: data.avgMessagesPerDay || 12,
+          activeMinutes: Math.round((data.avgMessagesPerDay || 12) * 1.5) || 18,
+          totalTokens: data.avgTokensPerDay || 2500,
         })
-        console.log('Loaded real averages from backend:', data)
+        console.log('Loaded user averages from backend:', data)
       } else {
-        console.warn('Failed to fetch averages, using defaults')
+        console.warn('Failed to fetch user averages, using defaults')
       }
     } catch (err) {
       console.warn('Error loading averages:', err.message, '- using defaults')
@@ -203,7 +203,7 @@ export default function BuddyPage() {
     const benchmarkSentence =
       tokens === 0 && messages === 0 && minutes === 0
         ? 'No tracked usage has been recorded yet, so Buddy is waiting for more activity before showing a stronger reaction.'
-        : `Right now, your tracked prompt count is ${messageComparison}, your active time is ${minuteComparison}, and your token usage is ${tokenComparison} compared with a typical user session.`
+        : `Right now, your tracked prompt count is ${messageComparison}, your active time is ${minuteComparison}, and your token usage is ${tokenComparison} compared with your personal average.`
   
     if (tokens === 0 && messages === 0 && minutes === 0) {
       return {
@@ -217,7 +217,7 @@ export default function BuddyPage() {
         tips: [
           'Send a few tracked prompts to initialize Buddy with real usage data.',
           'Refresh this page after interacting with ChatGPT to update Buddy’s state.',
-          'Use the dashboard to compare your usage pattern against the average-user benchmark.',
+          'Use the dashboard to compare your usage pattern against your personal average.',
         ],
       }
     }

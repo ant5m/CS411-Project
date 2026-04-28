@@ -28,6 +28,7 @@ export default function Dashboard() {
   const [showBenchmark, setShowBenchmark] = useState(false)
   const [isSyncing, setIsSyncing] = useState(false)
   const [lastSync, setLastSync] = useState('Not synced yet')
+  const [userAverage, setUserAverage] = useState(null)
 
   useEffect(() => {
     if (!authLoading && !user) {
@@ -62,6 +63,7 @@ export default function Dashboard() {
       
       // Load initial stats immediately
       loadStats(selectedRange)
+      loadUserAverage()
 
       // Poll for updates every 10 seconds
       const pollInterval = setInterval(() => {
@@ -83,6 +85,35 @@ export default function Dashboard() {
       }
     }
   }, [user, authLoading, router, selectedRange])
+
+  const loadUserAverage = async () => {
+    try {
+      const session = await supabase.auth.getSession()
+      const token = session.data.session?.access_token
+      
+      if (!token) {
+        console.warn('⚠️ No token for user average')
+        return
+      }
+
+      const response = await fetch(`${API_BASE_URL}/api/stats/user-average`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      })
+
+      if (!response.ok) {
+        console.warn('⚠️ Failed to fetch user average')
+        return
+      }
+
+      const data = await response.json()
+      console.log('📊 User average loaded:', data)
+      setUserAverage(data)
+    } catch (err) {
+      console.error('❌ Error loading user average:', err)
+    }
+  }
 
   const loadStats = async (range = 'today') => {
     try {
@@ -168,10 +199,10 @@ export default function Dashboard() {
       totalEstimatedTokens,
       estimatedCO2,
       trend,
-      avgTrend: buildAverageTrend(selectedRange),
+      avgTrend: buildAverageTrend(selectedRange, userAverage),
       labels: getTrendLabels(selectedRange),
     }
-  }, [stats, selectedRange, hasData])
+  }, [stats, selectedRange, hasData, userAverage])
 
   const buddyState = useMemo(() => {
     const tokens = Number(derivedStats.totalEstimatedTokens || 0)
@@ -358,7 +389,7 @@ export default function Dashboard() {
                   onClick={() => setShowBenchmark((prev) => !prev)}
                   className="rounded-full border border-[#d7eee2] bg-white px-4 py-2 text-sm font-medium text-slate-600 transition hover:bg-[#f2fbf6]"
                 >
-                  {showBenchmark ? 'Hide Average' : 'Compare to Average'}
+                  {showBenchmark ? 'Hide Your Average' : 'Show Your Average'}
                 </button>
               </div>
 
@@ -501,10 +532,30 @@ function buildTrendArray(baseValue, selectedRange, hasData, breakdown) {
   ]
 }
 
-function buildAverageTrend(selectedRange) {
-  if (selectedRange === 'today') return [2, 2, 2, 2, 2, 2]
-  if (selectedRange === 'week') return [5, 5, 5, 5, 5, 5, 5]
-  return [14, 14, 14, 14]
+function buildAverageTrend(selectedRange, userAverage) {
+  if (!userAverage || !userAverage.avgTokensPerDay) {
+    // Fallback to hardcoded defaults if no user average available
+    if (selectedRange === 'today') return [2, 2, 2, 2, 2, 2]
+    if (selectedRange === 'week') return [5, 5, 5, 5, 5, 5, 5]
+    return [14, 14, 14, 14]
+  }
+
+  const avgTokens = Math.max(1, userAverage.avgTokensPerDay)
+
+  if (selectedRange === 'today') {
+    // Distribute daily average across 6 buckets (4 hours each)
+    const perBucket = avgTokens / 6
+    return [perBucket, perBucket, perBucket, perBucket, perBucket, perBucket]
+  }
+
+  if (selectedRange === 'week') {
+    // One value per day for the week
+    return Array(7).fill(avgTokens)
+  }
+
+  // Month: weekly average (avgTokens * 7 per week)
+  const perWeek = avgTokens * 7
+  return [perWeek, perWeek, perWeek, perWeek]
 }
 
 function getTrendLabels(selectedRange) {
@@ -637,7 +688,7 @@ function TrendChart({ values, average, labels }) {
       {average && (
         <div className="flex items-center gap-2">
           <div className="h-0.5 w-8 border-t-2 border-dashed border-[#f3c14b]" />
-          <p className="text-xs text-slate-400">Average user benchmark</p>
+          <p className="text-xs text-slate-400">Your average</p>
         </div>
       )}
     </div>
