@@ -16,6 +16,7 @@ const initialStats = {
   activeMinutes: 0,
   totalEstimatedTokens: 0,
   productivityInsight: 'No insight yet.',
+  breakdown: [],
   source: 'unknown',
 }
 
@@ -27,6 +28,11 @@ export default function BuddyPage() {
   const [status, setStatus] = useState('Loading...')
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [lastSync, setLastSync] = useState('Not synced yet')
+  const [averages, setAverages] = useState({
+    messageCount: 12,
+    activeMinutes: 18,
+    totalTokens: 2500,
+  })
 
   const [activeModal, setActiveModal] = useState(null)
   const [simulateAssetFailure, setSimulateAssetFailure] = useState(false)
@@ -39,6 +45,28 @@ export default function BuddyPage() {
     }
 
     if (user) {
+      // Send auth token to extension
+      const sendTokenToExtension = async () => {
+        try {
+          const session = await supabase.auth.getSession()
+          const token = session.data.session?.access_token
+          const userId = session.data.session?.user?.id
+          
+          if (token && userId) {
+            window.postMessage({
+              type: 'CHATGPT_TRACKER_AUTH',
+              token,
+              userId,
+            }, '*')
+            console.log('📤 Sent auth token to extension from buddy page')
+          }
+        } catch (err) {
+          console.error('Failed to send token to extension:', err)
+        }
+      }
+      
+      sendTokenToExtension()
+
       const savedUiState = localStorage.getItem(STORAGE_KEY)
 
       if (savedUiState) {
@@ -53,6 +81,7 @@ export default function BuddyPage() {
       }
 
       loadBuddyData()
+      loadAverages()
     }
   }, [user, authLoading, router])
 
@@ -74,13 +103,26 @@ export default function BuddyPage() {
       setIsRefreshing(true)
 
       const session = await supabase.auth.getSession()
+      const token = session.data.session?.access_token
+      
+      if (!token) {
+        console.error('No auth token available')
+        setStatus('Error: No authentication token')
+        setIsRefreshing(false)
+        return
+      }
+
       const response = await fetch(`${API_BASE_URL}/api/stats/daily`, {
         headers: {
-          Authorization: `Bearer ${session.data.session?.access_token}`,
+          Authorization: `Bearer ${token}`,
         },
       })
 
-      if (!response.ok) throw new Error(`HTTP ${response.status}`)
+      if (!response.ok) {
+        const errorText = await response.text()
+        console.error(`API Error: ${response.status} - ${errorText}`)
+        throw new Error(`HTTP ${response.status}`)
+      }
 
       const data = await response.json()
 
@@ -90,10 +132,11 @@ export default function BuddyPage() {
         activeMinutes: data.activeMinutes ?? 0,
         totalEstimatedTokens: data.totalEstimatedTokens ?? 0,
         productivityInsight: data.productivityInsight ?? 'No insight yet.',
-        source: data.source ?? 'unknown',
+        breakdown: data.breakdown ?? [],
+        source: data.source ?? 'Web Extension',
       })
 
-      setStatus(`Connected (${data.source || 'unknown'})`)
+      setStatus(`Connected (${data.source || 'Database'})`)
       setLastSync('just now')
     } catch (err) {
       console.error('Failed to load Buddy data:', err)
@@ -103,15 +146,47 @@ export default function BuddyPage() {
     }
   }
 
+  const loadAverages = async () => {
+    try {
+      const session = await supabase.auth.getSession()
+      const token = session.data.session?.access_token
+      
+      if (!token) {
+        console.warn('No token available for fetching averages, using defaults')
+        return
+      }
+
+      const response = await fetch(`${API_BASE_URL}/api/stats/averages`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      })
+
+      if (response.ok) {
+        const data = await response.json()
+        setAverages({
+          messageCount: data.avgMessages || 12,
+          activeMinutes: data.avgMinutes || 18,
+          totalTokens: data.avgTokens || 2500,
+        })
+        console.log('Loaded real averages from backend:', data)
+      } else {
+        console.warn('Failed to fetch averages, using defaults')
+      }
+    } catch (err) {
+      console.warn('Error loading averages:', err.message, '- using defaults')
+    }
+  }
+
   const buddyState = useMemo(() => {
     const tokens = Number(stats.totalEstimatedTokens || 0)
     const messages = Number(stats.messageCount || 0)
     const minutes = Number(stats.activeMinutes || 0)
   
-    // Simple benchmark values for comparison
-    const avgMessages = 12
-    const avgMinutes = 18
-    const avgTokens = 2500
+    // Real benchmark values from backend/loaded averages
+    const avgMessages = averages.messageCount
+    const avgMinutes = averages.activeMinutes
+    const avgTokens = averages.totalTokens
   
     const compareToAverage = (value, average) => {
       if (value === 0) return 'no meaningful activity yet'
@@ -135,7 +210,7 @@ export default function BuddyPage() {
         health: 'Unknown',
         mood: 'Neutral',
         impact: 'Limited Activity',
-        badge: '🌱 Limited Activity',
+        badge: 'Limited Activity',
         image: '/neutral_buddy.png',
         accent: 'from-slate-100 to-slate-50',
         explanation: `${benchmarkSentence} Buddy reflects environmental impact using AI usage metadata such as token volume, which serves as a proxy for computational effort.`,
@@ -151,8 +226,8 @@ export default function BuddyPage() {
       return {
         health: 'Good',
         mood: 'Happy',
-        impact: 'Low Impact',
-        badge: '🌱 Low Impact',
+        impact: 'Low',
+        badge: 'Low Impact',
         image: '/good_buddy.png',
         accent: 'from-emerald-100 to-green-50',
         explanation: `${benchmarkSentence} Your current token usage is efficient enough to keep Buddy in a healthy state. Lower token volume usually means less computation and lower estimated environmental impact.`,
@@ -168,8 +243,8 @@ export default function BuddyPage() {
       return {
         health: 'Fair',
         mood: 'Tired',
-        impact: 'Moderate Impact',
-        badge: '🍃 Moderate Impact',
+        impact: 'Moderate',
+        badge: 'Moderate Impact',
         image: '/neutral_buddy.png',
         accent: 'from-yellow-100 to-lime-50',
         explanation: `${benchmarkSentence} Your recent usage is moderately heavy, which increases the computational work required to process your requests. Buddy is still stable, but this level of activity is starting to wear it down.`,
@@ -195,7 +270,7 @@ export default function BuddyPage() {
         'Use the dashboard trend view to identify your heaviest usage periods and reduce those spikes over time.',
       ],
     }
-  }, [stats])
+  }, [stats, averages])
   
   const handleImageError = () => {
     setAssetError(true)
@@ -237,13 +312,13 @@ export default function BuddyPage() {
                   <p className="mt-2 text-base text-slate-500">Last sync: {lastSync}</p>
                 </div>
 
-                <div className="flex flex-wrap gap-3">
+                <div className="flex flex-row items-center gap-3">
                   <button
                     onClick={loadBuddyData}
                     disabled={isRefreshing}
                     className="rounded-full bg-[#0ea56a] px-5 py-3 text-base font-semibold text-white transition hover:bg-[#0c935f] disabled:cursor-not-allowed disabled:bg-[#8ed8bc]"
                   >
-                    {isRefreshing ? 'Refreshing...' : 'Refresh Buddy State'}
+                    {isRefreshing ? 'Refreshing...' : 'Refresh Buddy'}
                   </button>
 
                   <Link
@@ -285,21 +360,21 @@ export default function BuddyPage() {
                 <div className="mt-6 grid gap-5 md:grid-cols-3">
                   <MetricCard
                     accent="bg-[#2fd37c]"
-                    icon="💚"
+                    icon=""
                     label="Health"
                     value={buddyState.health}
                     sublabel="current condition"
                   />
                   <MetricCard
                     accent="bg-[#53a8ff]"
-                    icon="🙂"
+                    icon=""
                     label="Mood"
                     value={buddyState.mood}
                     sublabel="emotional state"
                   />
                   <MetricCard
                     accent="bg-[#f3c14b]"
-                    icon="🌍"
+                    icon=""
                     label="Impact"
                     value={buddyState.impact}
                     sublabel="impact level"
@@ -325,14 +400,14 @@ export default function BuddyPage() {
                       onClick={() => setActiveModal('explanation')}
                       className="rounded-full bg-[#2fd37c] px-5 py-3 text-base font-semibold text-white shadow-sm transition hover:bg-[#28bf70]"
                     >
-                      Impact Explanation 🔎
+                      Impact Explanation 
                     </button>
                     <button
                       type="button"
                       onClick={() => setActiveModal('tips')}
                       className="rounded-full border border-[#cfe8dc] bg-[#e6f6ee] px-5 py-3 text-base font-semibold text-slate-700 transition hover:bg-[#dff3e9]"
                     >
-                      Get Tips 🌱
+                      Get Tips 
                     </button>
                   </div>
                 </div>
@@ -347,21 +422,21 @@ export default function BuddyPage() {
                 <div className="mt-6 grid gap-5 md:grid-cols-3">
                   <MetricCard
                     accent="bg-[#2fd37c]"
-                    icon="💬"
+                    icon=""
                     label="Messages"
                     value={stats.messageCount}
                     sublabel="tracked prompts"
                   />
                   <MetricCard
                     accent="bg-[#53a8ff]"
-                    icon="⏱️"
+                    icon=""
                     label="Active Minutes"
                     value={stats.activeMinutes}
                     sublabel="session time"
                   />
                   <MetricCard
                     accent="bg-[#f3c14b]"
-                    icon="🧠"
+                    icon=""
                     label="Estimated Tokens"
                     value={stats.totalEstimatedTokens}
                     sublabel="usage volume"
@@ -369,7 +444,7 @@ export default function BuddyPage() {
                 </div>
 
                 <div className="mt-5 rounded-[1.4rem] border border-[#d7eee2] bg-[#f7fcf9] p-4 text-sm text-slate-600">
-                  Source: {stats.source || 'unknown'} • Date: {stats.date || '-'}
+                  Source: {stats.source || 'Database'} • Date: {stats.date || '-'}
                 </div>
               </div>
             </div>

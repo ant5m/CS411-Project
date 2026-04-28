@@ -1,4 +1,4 @@
-console.log('🚀 CONTENT SCRIPT LOADED');
+console.log(' CONTENT SCRIPT LOADED');
 
 // ============================================================
 // UTILITIES
@@ -13,7 +13,7 @@ function generateUUID() {
 }
 
 const SESSION_ID = generateUUID();
-console.log('📍 Session:', SESSION_ID);
+console.log(' Session:', SESSION_ID);
 
 function getDeviceId() {
   let id = localStorage.getItem('tracker-device-id');
@@ -28,7 +28,9 @@ function getDeviceId() {
 // SEND TO BACKGROUND
 // ============================================================
 
-function recordEvent(eventData) {
+function recordEvent(eventData, messageText) {
+  // Simple send - deduplication done at DOM level
+  
   const payload = {
     userId: getDeviceId(),
     sessionId: SESSION_ID,
@@ -36,7 +38,7 @@ function recordEvent(eventData) {
     ...eventData,
   };
 
-  console.log('💬 Event recorded:', payload);
+  console.log('📤 Event sent:', { eventType: eventData.eventType, charCount: eventData.messageCharCount });
 
   window.postMessage(
     {
@@ -48,68 +50,147 @@ function recordEvent(eventData) {
 }
 
 // ============================================================
-// FETCH INTERCEPTION
+// FETCH INTERCEPTION - DISABLED TO PREVENT CHATGPT ERRORS
+// ============================================================
+// Note: Fetch interception was causing "No resume URL" errors in ChatGPT
+// Using DOM mutation observer approach instead
+
+// ============================================================
+// DOM MUTATION OBSERVER FOR MESSAGE TRACKING
 // ============================================================
 
-const originalFetch = window.fetch;
-window.fetch = function(...args) {
-  const [resource] = args;
-  const url = typeof resource === 'string' ? resource : resource?.url || '';
-  const options = args[1];
-  
-  // Log ALL POST requests to backend-api for debugging
-  if (url.includes('backend-api') && options?.method === 'POST') {
-    console.log('🔍 FETCH INTERCEPTED:', url);
-    console.log('📋 Body:', options.body ? options.body.substring(0, 200) : 'empty');
+// Track processed DOM elements by reference (WeakSet survives attribute loss)
+const processedElements = new WeakSet();
+const recentMessages = []; // Track recent messages by text + timestamp
+const DEDUP_WINDOW = 2000; // 2 second window for deduplication
+
+function extractUserMessage(element) {
+  // Look for user message text in ChatGPT's DOM structure
+  try {
+    let text = '';
     
-    try {
-      const bodyStr = options.body;
-      if (bodyStr && typeof bodyStr === 'string') {
-        const body = JSON.parse(bodyStr);
-        console.log('📦 Parsed body keys:', Object.keys(body));
-        console.log('📦 Full body:', body);
-        
-        const messages = body?.messages;
-        
-        if (Array.isArray(messages) && messages.length > 0) {
-          const lastMsg = messages[messages.length - 1];
-          const content = lastMsg?.content;
-          
-          let text = '';
-          // ChatGPT stores message text in content.parts array
-          if (Array.isArray(content?.parts) && content.parts.length > 0) {
-            text = content.parts.join(' ');
-          } else if (typeof content === 'string') {
-            text = content;
-          } else if (Array.isArray(content) && content.length > 0) {
-            text = content.map(c => c.text || '').join(' ');
-          } else if (content?.text) {
-            text = content.text;
-          }
-          
-          if (text && text.trim()) {
-            console.log(`✅ MESSAGE DETECTED: "${text.substring(0, 60)}..." (${text.length} chars)`);
-            recordEvent({
-              eventType: 'message_sent',
-              messageCharCount: text.length,
-              estimatedTokens: Math.ceil(text.length / 4),
-            });
-          } else {
-            console.log('⚠️ Message array found but no text extracted');
-          }
-        } else {
-          console.log('ℹ️ No messages array in body or empty');
-        }
-      } else {
-        console.log('⚠️ Body is not a string or empty');
-      }
-    } catch (e) {
-      console.warn('❌ Parse error:', e.message);
+    // Try to get text content from the element
+    text = element.innerText || element.textContent;
+    
+    return text ? text.trim() : '';
+  } catch (e) {
+    console.warn('Error extracting message:', e.message);
+    return '';
+  }
+}
+
+function isDuplicate(text) {
+  // Check if we've seen this exact text recently
+  const now = Date.now();
+  
+  // Clean old entries
+  for (let i = recentMessages.length - 1; i >= 0; i--) {
+    if (now - recentMessages[i].timestamp > DEDUP_WINDOW) {
+      recentMessages.splice(i, 1);
     }
   }
+  
+  // Check if text exists in recent messages
+  const exists = recentMessages.some(m => m.text === text);
+  
+  if (!exists) {
+    recentMessages.push({ text, timestamp: now });
+  }
+  
+  return exists;
+}
 
-  return originalFetch.apply(this, args);
-};
+function monitorChatMessages() {
+  // Watch for new message additions to the chat
+  const chatContainer = document.querySelector('[data-testid="chatgpt-conversation"]') || 
+                        document.querySelector('main') ||
+                        document.body;
+  
+  if (!chatContainer) {
+    console.log('⚠️ Chat container not found, retrying in 2 seconds...');
+    setTimeout(monitorChatMessages, 2000);
+    return;
+  }
+
+  console.log('✅ Chat container found, setting up mutation observer');
+
+  const observer = new MutationObserver((mutations) => {
+    try {
+      mutations.forEach((mutation) => {
+        // Look for added nodes (new messages)
+        mutation.addedNodes.forEach((node) => {
+          if (node.nodeType !== 1) return; // Skip non-element nodes
+
+          try {
+            // Look for user message elements
+            const messageElements = [];
+            
+            // Check if this is a user message
+            if (node.getAttribute && node.getAttribute('data-message-author-role') === 'user') {
+              messageElements.push(node);
+            }
+            
+            // Look deeper for user messages
+            if (node.querySelectorAll) {
+              try {
+                node.querySelectorAll('[data-message-author-role="user"]').forEach(el => {
+                  if (!messageElements.includes(el)) {
+                    messageElements.push(el);
+                  }
+                });
+              } catch (e) {
+                // Ignore query errors
+              }
+            }
+
+            messageElements.forEach((msgElement) => {
+              // Skip if we've already processed this exact element object
+              if (processedElements.has(msgElement)) {
+                return;
+              }
+              
+              const text = extractUserMessage(msgElement);
+              
+              if (!text || text.length === 0) {
+                return;
+              }
+              
+              // Check if it's a duplicate by text content
+              if (isDuplicate(text)) {
+                console.log(`⏭️ Duplicate message (seen recently): "${text.substring(0, 40)}..."`);
+                return;
+              }
+              
+              // Mark this element object as processed
+              processedElements.add(msgElement);
+              
+              console.log(`✅ NEW MESSAGE: "${text.substring(0, 60)}..." (${text.length} chars)`);
+              recordEvent({
+                eventType: 'message_sent',
+                messageCharCount: text.length,
+                estimatedTokens: Math.ceil(text.length / 4),
+              }, text);
+            });
+          } catch (err) {
+            console.error('Error processing node:', err);
+          }
+        });
+      });
+    } catch (err) {
+      console.error('Error in mutation observer:', err);
+    }
+  });
+
+  // Start observing
+  observer.observe(chatContainer, {
+    childList: true,
+    subtree: true,  // Back to subtree: true to catch all messages
+    attributes: false,
+    characterData: false,
+  });
+
+  console.log('🔍 Mutation observer active - monitoring for new messages');
+}
 
 // ============================================================
 // AUTH TOKEN LISTENER (from webpage)
@@ -140,7 +221,10 @@ window.addEventListener('message', (event) => {
   }
 });
 
-console.log('✅ Message tracker ready (fetch interception + auth listener)');
+console.log('✅ Message tracker ready (DOM mutation observer + auth listener)');
+
+// Start monitoring for messages
+monitorChatMessages();
 
 // Test function for manual debugging
 window.testTracker = function(msg = 'Test message: Hello ChatGPT!') {
@@ -149,5 +233,42 @@ window.testTracker = function(msg = 'Test message: Hello ChatGPT!') {
     eventType: 'message_sent',
     messageCharCount: msg.length,
     estimatedTokens: Math.ceil(msg.length / 4),
-  });
+  }, msg);
+};
+
+// Diagnostic function to inspect DOM structure
+window.diagnoseDOM = function() {
+  console.log('🔍 ========== ChatGPT DOM DIAGNOSIS ==========');
+  
+  console.log('\n📍 Looking for conversation container:');
+  const convContainer = document.querySelector('[data-testid="chatgpt-conversation"]');
+  console.log('  [data-testid="chatgpt-conversation"]:', convContainer ? '✅ FOUND' : '❌ NOT FOUND');
+  
+  const mainEl = document.querySelector('main');
+  console.log('  main:', mainEl ? '✅ FOUND' : '❌ NOT FOUND');
+  
+  console.log('\n📍 Looking for message elements:');
+  const userMsgs = document.querySelectorAll('[data-message-author-role="user"]');
+  console.log('  [data-message-author-role="user"]:', userMsgs.length, 'found');
+  
+  const allMsgIds = document.querySelectorAll('[data-message-id]');
+  console.log('  [data-message-id]:', allMsgIds.length, 'found');
+  
+  const assistantMsgs = document.querySelectorAll('[data-message-author-role="assistant"]');
+  console.log('  [data-message-author-role="assistant"]:', assistantMsgs.length, 'found');
+  
+  console.log('\n📍 Alternative selectors:');
+  console.log('  [role="presentation"]:', document.querySelectorAll('[role="presentation"]').length, 'found');
+  console.log('  [data-testid*="message"]:', document.querySelectorAll('[data-testid*="message"]').length, 'found');
+  console.log('  article:', document.querySelectorAll('article').length, 'found');
+  
+  if (userMsgs.length > 0) {
+    console.log('\n✅ Sample user message element:');
+    const sample = userMsgs[0];
+    console.log('  Class:', sample.className);
+    console.log('  Data attributes:', Array.from(sample.attributes).filter(a => a.name.startsWith('data-')).map(a => a.name).join(', '));
+    console.log('  Text content preview:', sample.textContent.substring(0, 100));
+  }
+  
+  console.log('\n========== END DIAGNOSIS ==========');
 };

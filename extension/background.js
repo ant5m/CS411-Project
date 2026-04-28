@@ -1,21 +1,21 @@
 // Background Service Worker for Chrome Extension MV3
-console.log('🔧 BACKGROUND WORKER STARTED');
+console.log(' BACKGROUND WORKER STARTED');
 
 const API_BASE_URL = 'http://localhost:4000';
 
 // Listen for messages from injector/content
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-  console.log('🎯 Background received message:', request.action, 'from', sender.url);
+  console.log(' Background received message:', request.action, 'from', sender.url);
   
   if (request.action === 'recordEvent') {
-    console.log('📥 Recording event:', request.event);
+    console.log(' Recording event:', request.event);
     recordEvent(request.event)
       .then((success) => {
-        console.log('✅ Event recorded, responding:', { success });
+        console.log(' Event recorded, responding:', { success });
         sendResponse({ success });
       })
       .catch((error) => {
-        console.error('❌ Error recording event:', error);
+        console.error(' Error recording event:', error);
         sendResponse({ success: false, error: error.message });
       });
     return true; // Keep channel open for async response
@@ -24,9 +24,9 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === 'setAuthToken') {
     const token = request.token;
     const userId = request.userId;
-    console.log('🔐 Background: Received auth token for user:', userId);
-    console.log('🔐 Background: Token length:', token ? token.length : 0);
-    console.log('🔐 Background: Token preview:', token ? token.substring(0, 20) + '...' : 'null');
+    console.log(' Background: Received auth token for user:', userId);
+    console.log(' Background: Token length:', token ? token.length : 0);
+    console.log(' Background: Token preview:', token ? token.substring(0, 20) + '...' : 'null');
     
     // Store token in chrome.storage.sync (persists across device restarts)
     chrome.storage.sync.set({ 
@@ -34,15 +34,16 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       authenticatedUserId: userId,
       tokenSetAt: new Date().toISOString(),
     }, () => {
-      console.log('✅ Background: Auth token stored in sync storage');
-      console.log('✅ Background: Now verifying storage read...');
+      console.log(' Background: Auth token stored in sync storage for user:', userId);
+      console.log(' Background: Now verifying storage read...');
       
       // Verify it was actually stored
       chrome.storage.sync.get(['authToken', 'authenticatedUserId'], (result) => {
-        console.log('✅ Background: Verified storage contains:', {
+        console.log(' Background: Verified storage contains:', {
           hasAuthToken: !!result.authToken,
           tokenLength: result.authToken ? result.authToken.length : 0,
           userId: result.authenticatedUserId,
+          matches: result.authenticatedUserId === userId,
         });
       });
       
@@ -53,12 +54,12 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
   if (request.action === 'setUserId') {
     const userId = request.userId;
-    console.log('🆔 Setting authenticated user ID:', userId);
+    console.log(' Setting authenticated user ID:', userId);
     chrome.storage.local.set({ 
       authenticatedUserId: userId,
       authenticatedUserSetAt: new Date().toISOString(),
     }, () => {
-      console.log('✅ User ID stored:', userId);
+      console.log(' User ID stored:', userId);
       sendResponse({ success: true, userId, message: 'Authenticated user set successfully' });
     });
     return true;
@@ -68,13 +69,13 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 // Fetch authenticated user ID and token from storage
 async function getAuthenticatedUserIdAndToken() {
   try {
-    console.log('🔍 getAuthenticatedUserIdAndToken: Starting retrieval...');
+    console.log(' getAuthenticatedUserIdAndToken: Starting retrieval...');
     
     // Try to get from sync storage first (persists across device restarts)
     const syncData = await new Promise((resolve) => {
-      console.log('🔍 getAuthenticatedUserIdAndToken: Calling chrome.storage.sync.get...');
+      console.log(' getAuthenticatedUserIdAndToken: Calling chrome.storage.sync.get...');
       chrome.storage.sync.get(['authToken', 'authenticatedUserId'], (result) => {
-        console.log('🔍 getAuthenticatedUserIdAndToken: Sync storage result:', {
+        console.log(' getAuthenticatedUserIdAndToken: Sync storage result:', {
           hasAuthToken: !!result.authToken,
           tokenLength: result.authToken ? result.authToken.length : 0,
           userId: result.authenticatedUserId,
@@ -85,7 +86,7 @@ async function getAuthenticatedUserIdAndToken() {
     });
 
     if (syncData.authToken) {
-      console.log('✅ Using JWT token from sync storage');
+      console.log(' Using JWT token from sync storage');
       return { 
         userId: syncData.authenticatedUserId,
         token: syncData.authToken,
@@ -93,18 +94,18 @@ async function getAuthenticatedUserIdAndToken() {
       };
     }
 
-    console.log('⚠️ No auth token in sync storage, checking local...');
+    console.log(' No auth token in sync storage, checking local...');
     
     // Fall back to local storage
     const localData = await new Promise((resolve) => {
       chrome.storage.local.get('authenticatedUserId', (result) => {
-        console.log('🔍 Local storage result:', result);
+        console.log(' Local storage result:', result);
         resolve(result);
       });
     });
 
     if (localData.authenticatedUserId) {
-      console.log('✅ Using userId from local storage');
+      console.log(' Using userId from local storage');
       return { 
         userId: localData.authenticatedUserId,
         token: null,
@@ -112,10 +113,10 @@ async function getAuthenticatedUserIdAndToken() {
       };
     }
 
-    console.warn('⚠️ No authenticated user. Extension will track without auth.');
-    console.log('📊 Debug info - Sync storage contents:');
+    console.warn(' No authenticated user. Extension will track without auth.');
+    console.log(' Debug info - Sync storage contents:');
     chrome.storage.sync.get(null, (allData) => {
-      console.log('🔍 All sync storage data:', allData);
+      console.log(' All sync storage data:', allData);
     });
     
     return { userId: null, token: null, source: 'none' };
@@ -125,11 +126,17 @@ async function getAuthenticatedUserIdAndToken() {
   }
 }
 
-// Record event to API
+// ============================================================
+// RECORD EVENT (LIVE ONLY - NO QUEUE)
+// ============================================================
+
 async function recordEvent(eventData) {
   try {
+    console.log('🔴 recordEvent called with:', eventData);
+    
     // Get authenticated user ID and token
     const { userId, token, source } = await getAuthenticatedUserIdAndToken();
+    console.log('📋 Auth result:', { userId, hasToken: !!token, source });
     
     let finalUserId = userId;
     
@@ -146,9 +153,9 @@ async function recordEvent(eventData) {
           }
         });
       });
-      console.log('📱 Using device ID (no auth):', finalUserId);
+      console.log(' Using device ID (no auth):', finalUserId);
     } else {
-      console.log(`🔐 Using ${source} auth:`, finalUserId);
+      console.log(` Using ${source} auth (user ID):`, finalUserId);
     }
 
     const payload = {
@@ -166,7 +173,13 @@ async function recordEvent(eventData) {
       console.log('🔐 Including JWT in request');
     }
 
-    console.log('🌐 Sending to backend:', JSON.stringify(payload));
+    console.log('🌐 Sending event to backend:', {
+      userId: finalUserId,
+      eventType: eventData.eventType,
+      messageCharCount: eventData.messageCharCount,
+      estimatedTokens: eventData.estimatedTokens,
+      hasToken: !!token,
+    });
     
     const response = await fetch(`${API_BASE_URL}/api/events`, {
       method: 'POST',
@@ -174,39 +187,34 @@ async function recordEvent(eventData) {
       body: JSON.stringify(payload),
     });
 
+    console.log(' Response status:', response.status);
+
     if (!response.ok) {
       const errorText = await response.text();
-      console.error(`❌ HTTP ${response.status}:`, errorText);
-      throw new Error(`HTTP ${response.status}`);
+      console.error(` HTTP ${response.status}:`, errorText);
+      throw new Error(`HTTP ${response.status}: ${errorText}`);
     }
 
     const data = await response.json();
-    console.log('✅ Event saved:', data);
-    
-    // Update storage with stats
-    chrome.storage.local.get(['eventCount', 'totalTokens'], (storageData) => {
-      const newCount = (storageData.eventCount || 0) + 1;
-      const newTokens = (storageData.totalTokens || 0) + (eventData.estimatedTokens || 0);
-      
-      chrome.storage.local.set({
-        eventCount: newCount,
-        totalTokens: newTokens,
-        lastEvent: new Date().toISOString(),
-      });
-      
-      console.log('📊 Stats updated - Events:', newCount, 'Tokens:', newTokens);
+    console.log('Event saved to backend:', {
+      eventId: data.event?.id,
+      userId: data.event?.user_id,
+      eventType: data.event?.event_type,
     });
     
     return true;
-  } catch (e) {
-    console.error('❌ recordEvent failed:', e.message);
-    throw e;
+    
+  } catch (err) {
+    console.error('❌ Event failed:', err.message);
+    return false;
   }
 }
 
 chrome.runtime.onInstalled.addListener((details) => {
   if (details.reason === 'install') {
-    console.log('🔔 Extension installed');
+    console.log('Extension installed');
+  } else if (details.reason === 'update') {
+    console.log('Extension updated');
   }
 });
 
@@ -218,9 +226,9 @@ async function checkCurrentUser() {
     });
   });
   
-  console.log('🆔 CURRENT TRACKING USER:');
+  console.log('CURRENT TRACKING USER:');
   console.log('  Authenticated User ID:', stored.authenticatedUserId || 'NOT SET');
   console.log('  Set At:', stored.authenticatedUserSetAt || '—');
   console.log('  Device ID (fallback):', stored.deviceId || 'NOT SET');
-  console.log('  Using:', stored.authenticatedUserId ? '✅ AUTHENTICATED' : '⚠️ DEVICE ID FALLBACK');
+  console.log('  Using:', stored.authenticatedUserId ? 'AUTHENTICATED' : '⚠️ DEVICE ID FALLBACK');
 }

@@ -15,7 +15,7 @@ const initialStats = {
   activeMinutes: 0,
   totalEstimatedTokens: 0,
   productivityInsight: 'No insight yet.',
-  source: 'unknown',
+  breakdown: [],
 }
 
 export default function Dashboard() {
@@ -36,14 +36,43 @@ export default function Dashboard() {
     }
 
     if (user) {
-      loadStats()
+      console.log('🎯 Dashboard mounted, loading stats for range:', selectedRange)
+      
+      // Send auth token to extension
+      const sendTokenToExtension = async () => {
+        try {
+          const session = await supabase.auth.getSession()
+          const token = session.data.session?.access_token
+          const userId = session.data.session?.user?.id
+          
+          if (token && userId) {
+            window.postMessage({
+              type: 'CHATGPT_TRACKER_AUTH',
+              token,
+              userId,
+            }, '*')
+            console.log('📤 Sent auth token to extension from dashboard')
+          }
+        } catch (err) {
+          console.error('Failed to send token to extension:', err)
+        }
+      }
+      
+      sendTokenToExtension()
+      
+      // Load initial stats immediately
+      loadStats(selectedRange)
 
+      // Poll for updates every 10 seconds
       const pollInterval = setInterval(() => {
-        loadStats()
-      }, 3000)
+        console.log(' Polling stats for range:', selectedRange)
+        loadStats(selectedRange)
+      }, 10000)
 
+      // Refresh on window focus
       const handleFocus = () => {
-        loadStats()
+        console.log('👁️ Window focused, refreshing stats')
+        loadStats(selectedRange)
       }
 
       window.addEventListener('focus', handleFocus)
@@ -53,22 +82,41 @@ export default function Dashboard() {
         window.removeEventListener('focus', handleFocus)
       }
     }
-  }, [user, authLoading, router])
+  }, [user, authLoading, router, selectedRange])
 
-  const loadStats = async () => {
+  const loadStats = async (range = 'today') => {
     try {
       setIsSyncing(true)
+      console.log(' Loading stats for range:', range)
 
       const session = await supabase.auth.getSession()
-      const response = await fetch(`${API_BASE_URL}/api/stats/daily`, {
+      const token = session.data.session?.access_token
+      
+      if (!token) {
+        console.error(' No auth token available')
+        setStatus('Error: No authentication token')
+        setIsSyncing(false)
+        return
+      }
+
+      console.log(' Token available, fetching from:', `${API_BASE_URL}/api/stats/daily?range=${range}`)
+      
+      const response = await fetch(`${API_BASE_URL}/api/stats/daily?range=${range}`, {
         headers: {
-          Authorization: `Bearer ${session.data.session?.access_token}`,
+          Authorization: `Bearer ${token}`,
         },
       })
 
-      if (!response.ok) throw new Error(`HTTP ${response.status}`)
+      console.log(' Response status:', response.status)
+
+      if (!response.ok) {
+        const errorText = await response.text()
+        console.error(' API Error:', errorText)
+        throw new Error(`HTTP ${response.status}`)
+      }
 
       const data = await response.json()
+      console.log(' Stats data received:', data)
 
       setStats({
         date: data.date ?? '-',
@@ -76,13 +124,14 @@ export default function Dashboard() {
         activeMinutes: data.activeMinutes ?? 0,
         totalEstimatedTokens: data.totalEstimatedTokens ?? 0,
         productivityInsight: data.productivityInsight ?? 'No insight yet.',
-        source: data.source ?? 'unknown',
+        breakdown: data.breakdown ?? [],
+        source: data.source ?? 'Web Extension',
       })
 
-      setStatus(`Connected (${data.source || 'unknown'})`)
+      setStatus(`Connected (${data.source || 'Database'})`)
       setLastSync('just now')
     } catch (err) {
-      console.error('Failed to load dashboard data:', err)
+      console.error(' Failed to load dashboard data:', err)
       setStatus(`Error: ${err.message}`)
     } finally {
       setIsSyncing(false)
@@ -95,23 +144,22 @@ export default function Dashboard() {
     Number(stats.totalEstimatedTokens) > 0
 
   const derivedStats = useMemo(() => {
-    const multiplier =
-      selectedRange === 'today' ? 1 : selectedRange === 'week' ? 7 : 30
-
-    const messageCount = Math.round((Number(stats.messageCount) || 0) * multiplier)
-    const activeMinutes = Math.round((Number(stats.activeMinutes) || 0) * multiplier)
-    const totalEstimatedTokens = Math.round(
-      (Number(stats.totalEstimatedTokens) || 0) * multiplier
-    )
+    // Don't multiply - backend already returns aggregated stats for the selected range
+    const messageCount = Math.round(Number(stats.messageCount) || 0)
+    const activeMinutes = Math.round(Number(stats.activeMinutes) || 0)
+    const totalEstimatedTokens = Math.round(Number(stats.totalEstimatedTokens) || 0)
 
     const estimatedCO2 = ((totalEstimatedTokens / 1000) * 0.35).toFixed(2)
 
     const label =
       selectedRange === 'today'
-        ? 'Today'
+        ? '24 Hours'
         : selectedRange === 'week'
         ? '7 Days'
         : '30 Days'
+
+    // Use actual breakdown data from backend
+    const trend = buildTrendArray(totalEstimatedTokens, selectedRange, hasData, stats.breakdown)
 
     return {
       label,
@@ -119,7 +167,7 @@ export default function Dashboard() {
       activeMinutes,
       totalEstimatedTokens,
       estimatedCO2,
-      trend: buildTrendArray(totalEstimatedTokens, selectedRange, hasData),
+      trend,
       avgTrend: buildAverageTrend(selectedRange),
       labels: getTrendLabels(selectedRange),
     }
@@ -133,7 +181,7 @@ export default function Dashboard() {
         health: 'Unknown',
         mood: 'Neutral',
         impact: 'Limited Activity',
-        badge: '🌱 Limited Activity',
+        badge: ' Limited Activity',
         image: '/neutral_buddy.png',
         summary:
           'Buddy does not have enough recent activity yet to show a stronger response.',
@@ -145,7 +193,7 @@ export default function Dashboard() {
         health: 'Good',
         mood: 'Happy',
         impact: 'Low Impact',
-        badge: '🌱 Low Impact',
+        badge: ' Low Impact',
         image: '/good_buddy.png',
         summary:
           'Buddy is doing well because your recent tracked usage is staying in a lower-impact range.',
@@ -157,7 +205,7 @@ export default function Dashboard() {
         health: 'Fair',
         mood: 'Tired',
         impact: 'Moderate Impact',
-        badge: '🍃 Moderate Impact',
+        badge: ' Moderate Impact',
         image: '/neutral_buddy.png',
         summary:
           'Buddy is starting to feel the effects of increased usage and is now in a moderate-impact state.',
@@ -168,7 +216,7 @@ export default function Dashboard() {
       health: 'Low',
       mood: 'Stressed',
       impact: 'High Impact',
-      badge: '🌍 High Impact',
+      badge: ' High Impact',
       image: '/poor_buddy.png',
       summary:
         'Buddy is stressed because recent tracked usage is high enough to indicate a stronger environmental impact.',
@@ -211,7 +259,7 @@ export default function Dashboard() {
 
               <div className="flex flex-wrap gap-3">
                 <button
-                  onClick={loadStats}
+                  onClick={() => loadStats(selectedRange)}
                   disabled={isSyncing}
                   className="rounded-full bg-[#0ea56a] px-5 py-3 text-base font-semibold text-white transition hover:bg-[#0c935f] disabled:cursor-not-allowed disabled:bg-[#8ed8bc]"
                 >
@@ -240,7 +288,7 @@ export default function Dashboard() {
 
             <div className="inline-flex rounded-full bg-[#d7f1e4] p-1.5">
               <RangeButton
-                label="Today"
+                label="24 Hours"
                 isActive={selectedRange === 'today'}
                 onClick={() => setSelectedRange('today')}
               />
@@ -260,28 +308,28 @@ export default function Dashboard() {
           <div className="mt-7 grid gap-5 md:grid-cols-2 xl:grid-cols-4">
             <MetricCard
               accent="bg-[#2fd37c]"
-              icon="💬"
+              icon=""
               label="Messages"
               value={hasData ? derivedStats.messageCount : '—'}
               sublabel="tracked prompts"
             />
             <MetricCard
               accent="bg-[#53a8ff]"
-              icon="⏱️"
+              icon=""
               label="Active Minutes"
               value={hasData ? derivedStats.activeMinutes : '—'}
               sublabel="estimated session time"
             />
             <MetricCard
               accent="bg-[#f3c14b]"
-              icon="🧠"
+              icon=""
               label="Estimated Tokens"
               value={hasData ? derivedStats.totalEstimatedTokens : '—'}
               sublabel="usage volume"
             />
             <MetricCard
               accent="bg-[#2fd37c]"
-              icon="🌍"
+              icon=""
               label="Estimated CO₂"
               value={hasData ? `${derivedStats.estimatedCO2} g` : '—'}
               sublabel={derivedStats.label}
@@ -382,8 +430,43 @@ export default function Dashboard() {
   )
 }
 
-function buildTrendArray(baseValue, selectedRange, hasData) {
-  if (!hasData) return [0.2, 0.1, 0.15, 0.12, 0.1, 0.08, 0.14]
+function buildTrendArray(baseValue, selectedRange, hasData, breakdown) {
+  console.log('buildTrendArray called with:', { baseValue, selectedRange, hasData, breakdownLength: breakdown?.length, breakdown })
+  // Use real breakdown data if available
+  if (breakdown && breakdown.length > 0) {
+    if (selectedRange === 'today' && breakdown.length === 24) {
+      // Aggregate 24 hours into 6 buckets
+      const bucketed = [0, 0, 0, 0, 0, 0]
+      const bucketSize = Math.ceil(24 / 6)
+      
+      breakdown.forEach((value, index) => {
+        const bucketIndex = Math.floor(index / bucketSize)
+        if (bucketIndex < 6) {
+          bucketed[bucketIndex] += value
+        }
+      })
+      
+      console.log('Aggregated today breakdown:', bucketed)
+      return bucketed
+    }
+    
+    // For week and month, just return the breakdown as-is
+    if (breakdown.length === 7) {
+      console.log('Using week breakdown:', breakdown)
+      return breakdown
+    }
+    if (breakdown.length === 4) {
+      console.log('Using month breakdown:', breakdown)
+      return breakdown
+    }
+  }
+
+  // Fallback to generated data if no breakdown available
+  console.log('Using fallback for range:', selectedRange)
+  if (!hasData) {
+    const zeros = selectedRange === 'today' ? [0, 0, 0, 0, 0, 0] : selectedRange === 'week' ? [0, 0, 0, 0, 0, 0, 0] : [0, 0, 0, 0]
+    return zeros
+  }
 
   const value = Number(baseValue || 0)
 
@@ -395,7 +478,6 @@ function buildTrendArray(baseValue, selectedRange, hasData) {
       Math.max(0.5, value * 1.0),
       Math.max(0.5, value * 0.7),
       Math.max(0.5, value * 0.9),
-      Math.max(0.5, value * 0.75),
     ]
   }
 
@@ -416,22 +498,22 @@ function buildTrendArray(baseValue, selectedRange, hasData) {
     Math.max(2, value * 0.8),
     Math.max(2, value * 0.75),
     Math.max(2, value * 0.95),
-    Math.max(2, value * 1.1),
-    Math.max(2, value * 1.0),
-    Math.max(2, value * 1.05),
   ]
 }
 
 function buildAverageTrend(selectedRange) {
-  if (selectedRange === 'today') return [2, 2, 2, 2, 2, 2, 2]
+  if (selectedRange === 'today') return [2, 2, 2, 2, 2, 2]
   if (selectedRange === 'week') return [5, 5, 5, 5, 5, 5, 5]
-  return [14, 14, 14, 14, 14, 14, 14]
+  return [14, 14, 14, 14]
 }
 
 function getTrendLabels(selectedRange) {
-  if (selectedRange === 'today') return ['1', '2', '3', '4', '5', '6', '7']
-  if (selectedRange === 'week') return ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
-  return ['W1', 'W2', 'W3', 'W4', 'W5', 'W6', 'W7']
+  if (selectedRange === 'today') {
+    // Labels aligned with the 6 aggregated buckets
+    return ['20h ago', '16h ago', '12h ago', '8h ago', '4h ago', 'now']
+  }
+  if (selectedRange === 'week') return ['6d ago', '5d ago', '4d ago', '3d ago', '2d ago', '1d ago', 'now']
+  return ['3w ago', '2w ago', '1w ago', 'now']
 }
 
 function RangeButton({ label, isActive, onClick }) {

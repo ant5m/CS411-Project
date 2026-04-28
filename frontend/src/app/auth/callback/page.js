@@ -41,7 +41,20 @@ function AuthCallbackContent() {
           return
         }
 
-        // Email is valid, proceed to dashboard
+        // Email is valid, send token to extension
+        const token = data.session.access_token
+        const userId = user.id
+
+        // Send token to extension via postMessage
+        window.postMessage({
+          type: 'CHATGPT_TRACKER_AUTH',
+          token,
+          userId,
+        }, '*')
+
+        console.log('📤 Sent auth token to extension')
+
+        // Proceed to dashboard
         router.push('/dashboard')
       } catch (err) {
         setError(err.message)

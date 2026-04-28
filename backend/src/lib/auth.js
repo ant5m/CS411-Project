@@ -20,12 +20,15 @@ async function authenticateUser(req, res, next) {
     const { data, error } = await supabase.auth.getUser(token)
     
     if (error || !data.user) {
+      console.error('❌ Auth error:', error?.message)
       return res.status(401).json({ error: 'Invalid token' })
     }
 
+    console.log('✅ User authenticated:', { id: data.user.id, email: data.user.email })
     req.user = data.user
     next()
   } catch (err) {
+    console.error('❌ Authentication exception:', err.message)
     res.status(401).json({ error: 'Authentication failed' })
   }
 }

@@ -31,6 +31,11 @@ const corsOptions = {
       return callback(null, true)
     }
 
+    // Allow localhost on any port for development
+    if (origin.startsWith('http://localhost:') || origin.startsWith('http://127.0.0.1:')) {
+      return callback(null, true)
+    }
+
     if (allowedOrigins.includes(origin) || origin.startsWith(extensionProtocol)) {
       return callback(null, true)
     }
@@ -162,59 +167,334 @@ app.post('/api/events', async (req, res) => {
   return res.status(201).json({ ok: true, event })
 })
 
-// Helper to summarize daily stats
-function summarizeDaily(events) {
+// Helper to get time range in milliseconds
+function getTimeRangeMs(range) {
+  switch (range) {
+    case 'week':
+      return 7 * 24 * 60 * 60 * 1000
+    case 'month':
+      return 30 * 24 * 60 * 60 * 1000
+    case 'today':
+    default:
+      return 24 * 60 * 60 * 1000
+  }
+}
+
+// Helper to get hourly breakdown for 24-hour period
+function getHourlyBreakdown(events) {
+  const hourlyData = Array(24).fill(0)
+  const now = new Date()
+  
+  events.forEach(event => {
+    const eventTime = new Date(event.created_at)
+    const hoursDiff = Math.floor((now - eventTime) / (1000 * 60 * 60))
+    
+    // Count backwards: 0 = current hour, 23 = 23 hours ago
+    if (hoursDiff >= 0 && hoursDiff < 24) {
+      hourlyData[hoursDiff] += Number(event.estimated_tokens) || 0
+    }
+  })
+  
+  // Reverse so index 0 is oldest, index 23 is newest
+  return hourlyData.reverse()
+}
+
+// Helper to get daily breakdown for 7-day period
+function getDailyBreakdown(events) {
+  const dailyData = Array(7).fill(0)
+  const now = new Date()
+  
+  events.forEach(event => {
+    const eventTime = new Date(event.created_at)
+    const daysDiff = Math.floor((now - eventTime) / (1000 * 60 * 60 * 24))
+    
+    // Count backwards: 0 = today, 6 = 6 days ago
+    if (daysDiff >= 0 && daysDiff < 7) {
+      dailyData[daysDiff] += Number(event.estimated_tokens) || 0
+    }
+  })
+  
+  // Reverse so index 0 is oldest, index 6 is today
+  return dailyData.reverse()
+}
+
+// Helper to get weekly breakdown for 30-day period
+function getWeeklyBreakdown(events) {
+  const weeklyData = Array(4).fill(0) // 4 buckets for 28 days (4 weeks)
+  const now = new Date()
+  
+  events.forEach(event => {
+    const eventTime = new Date(event.created_at)
+    const daysDiff = Math.floor((now - eventTime) / (1000 * 60 * 60 * 24))
+    
+    // Week 0 = days 0-6, Week 1 = days 7-13, Week 2 = days 14-20, Week 3 = days 21-27
+    const weekIndex = Math.floor(daysDiff / 7)
+    if (weekIndex >= 0 && weekIndex < 4) {
+      weeklyData[weekIndex] += Number(event.estimated_tokens) || 0
+    }
+  })
+  
+  // Reverse so index 0 is oldest (Week 3) and index 3 is newest (Week 0)
+  return weeklyData.reverse()
+}
+
+// Helper to summarize stats
+function summarizeStats(events, range = 'today') {
   const messageCount = events.filter((event) => event.event_type === 'message_sent').length
   const totalEstimatedTokens = events.reduce(
     (acc, event) => acc + (Number(event.estimated_tokens) || 0),
     0,
   )
-  const activeMinutes = Math.max(1, Math.round(messageCount * 1.7))
+  const activeMinutes = messageCount > 0 ? Math.round(messageCount * 1.7) : 0
+
+  const rangeLabel =
+    range === 'week' ? '7 Days' : range === 'month' ? '30 Days' : '24 Hours'
+
+  let productivityInsight = ''
+  if (messageCount === 0) {
+    productivityInsight = `No activity yet ${rangeLabel.toLowerCase()}. Start chatting with ChatGPT to see your usage!`
+  } else if (messageCount >= 10) {
+    productivityInsight = `High output ${rangeLabel.toLowerCase()}. You were consistently engaged with ChatGPT.`
+  } else {
+    productivityInsight = `Light usage ${rangeLabel.toLowerCase()}. Try batching prompts into focused sessions.`
+  }
+
+  console.log('📝 Generating insight for messageCount:', messageCount, '→', productivityInsight)
+
+  // Get breakdown based on range
+  let breakdown = []
+  if (range === 'today') {
+    breakdown = getHourlyBreakdown(events)
+  } else if (range === 'week') {
+    breakdown = getDailyBreakdown(events)
+  } else if (range === 'month') {
+    breakdown = getWeeklyBreakdown(events)
+  }
 
   return {
     date: new Date().toISOString().slice(0, 10),
+    range,
+    rangeLabel,
     messageCount,
     activeMinutes,
     totalEstimatedTokens,
-    productivityInsight:
-      messageCount >= 10
-        ? 'High output day. You were consistently engaged with ChatGPT.'
-        : 'Light usage day. Try batching prompts into focused sessions.',
+    productivityInsight,
+    breakdown,
   }
 }
 
-// Get daily stats (requires authentication)
-app.get('/api/stats/daily', authenticateUser, async (req, res) => {
-  const userId = req.user.id
+// Debug endpoint to see all events (no auth required - for debugging only)
+app.get('/api/debug/all-events', async (req, res) => {
+  console.log('🔍 DEBUG: Fetching ALL events from database (no filter)')
 
   try {
-    if (!hasSupabaseConfig()) {
-      // Return empty stats if Supabase not configured
-      return res.json(summarizeDaily([]))
+    const { data, error } = await supabase
+      .from('events')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(100)
+
+    if (error) {
+      return res.status(500).json({ error: error.message })
     }
 
-    // Fetch events from the past 24 hours
+    // Group by user_id to see distribution
+    const byUser = {}
+    data.forEach(event => {
+      if (!byUser[event.user_id]) byUser[event.user_id] = []
+      byUser[event.user_id].push(event)
+    })
+
+    console.log('📊 DEBUG: Total events:', data?.length || 0)
+    console.log('👥 DEBUG: Events by user:')
+    Object.entries(byUser).forEach(([userId, events]) => {
+      console.log(`  ${userId}: ${events.length} events`)
+    })
+
+    return res.json({
+      totalEvents: data?.length || 0,
+      uniqueUsers: Object.keys(byUser).length,
+      byUser: Object.fromEntries(
+        Object.entries(byUser).map(([userId, events]) => [
+          userId,
+          { count: events.length, latestEvent: events[0] }
+        ])
+      ),
+      allEvents: data || [],
+    })
+  } catch (err) {
+    console.error('❌ DEBUG error:', err.message)
+    return res.status(500).json({ error: err.message })
+  }
+})
+
+// Debug endpoint to see all events for a user
+app.get('/api/debug/events', authenticateUser, async (req, res) => {
+  const userId = req.user.id
+
+  console.log('🔍 DEBUG: Fetching ALL events for user:', userId)
+
+  try {
     const { data, error } = await supabase
       .from('events')
       .select('*')
       .eq('user_id', userId)
-      .gte('created_at', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString())
+      .order('created_at', { ascending: false })
 
     if (error) {
-      console.error('Error fetching stats:', error.message)
+      return res.status(500).json({ error: error.message })
+    }
+
+    console.log('📊 DEBUG: Total events found:', data?.length || 0)
+    if (data && data.length > 0) {
+      console.log('📋 DEBUG: Events:', data)
+    }
+
+    return res.json({
+      userId,
+      totalEvents: data?.length || 0,
+      events: data || [],
+    })
+  } catch (err) {
+    console.error('❌ DEBUG error:', err.message)
+    return res.status(500).json({ error: err.message })
+  }
+})
+
+app.get('/api/stats/daily', authenticateUser, async (req, res) => {
+  const userId = req.user.id
+  const range = req.query.range || 'today'
+
+  console.log('📊 Stats request from user:', { userId, userEmail: req.user.email, range })
+
+  try {
+    if (!hasSupabaseConfig()) {
+      console.warn('⚠️ Supabase not configured, returning empty stats')
+      return res.json(summarizeStats([], range))
+    }
+
+    // Calculate time range
+    const timeRangeMs = getTimeRangeMs(range)
+    const cutoffTime = new Date(Date.now() - timeRangeMs).toISOString()
+
+    console.log('🔍 Query parameters:', { userId, range, cutoffTime, timeRangeMs })
+
+    // Fetch events from the specified time range
+    const { data, error } = await supabase
+      .from('events')
+      .select('*')
+      .eq('user_id', userId)
+      .gte('created_at', cutoffTime)
+
+    console.log('📡 Query result for user', userId, ':', { eventCount: data?.length || 0, error: error?.message })
+
+    if (error) {
+      console.error('❌ Error fetching stats:', error.message)
       return res.status(500).json({
         error: 'Failed to fetch stats',
         details: error.message,
       })
     }
 
-    const summary = summarizeDaily(data || [])
+    console.log('✅ Events found:', data?.length || 0)
+    if (data && data.length > 0) {
+      console.log('📋 Sample events:', data.slice(0, 3))
+    }
+
+    const summary = summarizeStats(data || [], range)
+    console.log('📊 Summary for user', userId, ':', summary)
     return res.json(summary)
   } catch (err) {
-    console.error('Error in /api/stats/daily:', err)
+    console.error('❌ Error in /api/stats/daily:', err)
     return res.status(500).json({
       error: 'Failed to fetch stats',
       details: err.message,
+    })
+  }
+})
+
+// Get average stats across all users for benchmarking
+app.get('/api/stats/averages', authenticateUser, async (req, res) => {
+  try {
+    if (!hasSupabaseConfig()) {
+      return res.json({
+        avgMessages: 12,
+        avgMinutes: 18,
+        avgTokens: 2500,
+        source: 'defaults',
+      })
+    }
+
+    // Fetch all events from all users
+    const { data: allEvents, error } = await supabase
+      .from('events')
+      .select('*')
+
+    if (error) {
+      console.warn('⚠️ Error fetching events for averages:', error.message)
+      return res.json({
+        avgMessages: 12,
+        avgMinutes: 18,
+        avgTokens: 2500,
+        source: 'defaults',
+      })
+    }
+
+    if (!allEvents || allEvents.length === 0) {
+      return res.json({
+        avgMessages: 12,
+        avgMinutes: 18,
+        avgTokens: 2500,
+        source: 'defaults',
+      })
+    }
+
+    // Group by user to calculate per-user stats first
+    const userStats = {}
+    allEvents.forEach(event => {
+      if (!userStats[event.user_id]) {
+        userStats[event.user_id] = {
+          messageCount: 0,
+          totalTokens: 0,
+        }
+      }
+      if (event.event_type === 'message_sent') {
+        userStats[event.user_id].messageCount += 1
+      }
+      userStats[event.user_id].totalTokens += Number(event.estimated_tokens) || 0
+    })
+
+    // Calculate averages
+    const userCount = Object.keys(userStats).length
+    let totalMessages = 0
+    let totalTokens = 0
+
+    Object.values(userStats).forEach(stat => {
+      totalMessages += stat.messageCount
+      totalTokens += stat.totalTokens
+    })
+
+    const avgMessages = userCount > 0 ? Math.round(totalMessages / userCount) : 12
+    const avgTokens = userCount > 0 ? Math.round(totalTokens / userCount) : 2500
+    const avgMinutes = avgMessages > 0 ? Math.round(avgMessages * 1.5) : 18
+
+    console.log('📊 Calculated averages:', { avgMessages, avgMinutes, avgTokens, userCount })
+
+    return res.json({
+      avgMessages,
+      avgMinutes,
+      avgTokens,
+      userCount,
+      totalEvents: allEvents.length,
+      source: 'calculated',
+    })
+  } catch (err) {
+    console.error('❌ Error in /api/stats/averages:', err)
+    return res.json({
+      avgMessages: 12,
+      avgMinutes: 18,
+      avgTokens: 2500,
+      source: 'defaults',
     })
   }
 })

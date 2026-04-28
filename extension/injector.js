@@ -47,37 +47,14 @@ window.addEventListener('message', (event) => {
       if (chrome.runtime.lastError) {
         console.error('❌ INJECTOR: Background error:', chrome.runtime.lastError.message);
       } else {
-        console.log('✅ INJECTOR: Auth token forwarded to background worker');
-        console.log('✅ INJECTOR: Response:', response);
+        console.log(' INJECTOR: Auth token forwarded to background worker');
+        console.log(' INJECTOR: Response:', response);
       }
     });
   }
 });
 
-// Listen for storage changes and broadcast to page
-chrome.storage.onChanged.addListener((changes, areaName) => {
-  if (areaName === 'local') {
-    console.log('📦 Storage changed in injector:', changes);
-    // Broadcast to page
-    window.postMessage({
-      type: 'STORAGE_UPDATE',
-      data: changes,
-    }, '*');
-  }
-});
-
-function broadcastInitialStorageSnapshot() {
-  chrome.storage.local.get(['eventCount', 'totalTokens', 'lastEvent'], (data) => {
-    window.postMessage({
-      type: 'STORAGE_UPDATE',
-      data: {
-        eventCount: { newValue: data.eventCount || 0 },
-        totalTokens: { newValue: data.totalTokens || 0 },
-        lastEvent: { newValue: data.lastEvent || null },
-      },
-    }, '*');
-  });
-}
+// Storage broadcasts removed - dashboard uses backend API for accurate stats
 
 // Inject scripts
 function injectScript(filename) {
@@ -86,6 +63,12 @@ function injectScript(filename) {
   script.onload = () => {
     console.log(filename, 'injected');
     script.remove();
+    
+    // After widget script is injected, send initial storage snapshot
+    if (filename === 'widget.js') {
+      console.log('📸 Sending initial storage snapshot to widget');
+      setTimeout(() => broadcastInitialStorageSnapshot(), 100);
+    }
   };
   script.onerror = () => {
     console.error('Failed to inject', filename);
@@ -115,43 +98,31 @@ window.testTracker = function() {
       timestamp: new Date().toISOString(),
     }
   }, (response) => {
-    console.log('🔄 Test complete. Response:', response);
+    console.log(' Test complete. Response:', response);
   });
 };
 
 window.checkExtensionStorage = function() {
   chrome.storage.local.get(null, (data) => {
-    console.log('📦 EXTENSION STORAGE:', data);
+    console.log(' EXTENSION STORAGE:', data);
   });
 };
 
 // Run immediately
-console.log('⏳ Starting injector...');
+console.log(' Starting injector...');
 
 // Only inject scripts on ChatGPT pages, not on local web app
 const isChatGPT = /chatgpt\.com|openai\.com/.test(window.location.hostname);
-console.log('🌐 Current page:', window.location.hostname);
-console.log('🤖 Is ChatGPT?', isChatGPT);
+console.log(' Current page:', window.location.hostname);
+console.log(' Is ChatGPT?', isChatGPT);
 
 if (isChatGPT) {
-  console.log('✅ ChatGPT detected - injecting message tracker');
-  setTimeout(() => {
-    // Disabled for now - causing React errors
-    // injectStyles('widget.css');
-  }, 0);
+  console.log(' ChatGPT detected - injecting message tracker (sends data to backend)');
   setTimeout(() => {
     injectScript('content-script.js');
   }, 10);
-  setTimeout(() => {
-    // Disabled for now - causing React errors
-    // injectScript('widget.js');
-  }, 20);
-  setTimeout(() => {
-    broadcastInitialStorageSnapshot();
-  }, 30);
-
-  console.log('💡 Test commands: window.testTracker() or window.checkExtensionStorage()');
+  console.log(' Test commands: window.testTracker() or window.checkExtensionStorage()');
 } else {
-  console.log('ℹ️ Not ChatGPT - postMessage listener active for auth token relay');
+  console.log('ℹ Not ChatGPT - postMessage listener active for auth token relay');
 }
 

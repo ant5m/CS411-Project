@@ -15,7 +15,7 @@ function createTrackerWidget() {
   widget.id = 'chatgpt-tracker-widget';
   widget.innerHTML = `
     <div class="tracker-header">
-      <div class="tracker-title">📊 Tracker</div>
+      <div class="tracker-title"> Tracker</div>
       <button class="tracker-toggle">−</button>
     </div>
     <div class="tracker-stat">
@@ -34,7 +34,7 @@ function createTrackerWidget() {
   `;
 
   document.body.appendChild(widget);
-  console.log('✅ Widget created');
+  console.log('Widget created');
   
   // Add toggle button listener
   const toggleBtn = widget.querySelector('.tracker-toggle');
@@ -54,7 +54,7 @@ function updateWidgetDisplay() {
   const timeEl = document.getElementById('widget-last-time');
   
   if (!msgEl) {
-    console.log('⚠️ Widget elements not found');
+    console.log('Widget elements not found');
     return;
   }
 
@@ -84,12 +84,12 @@ window.addEventListener('message', (event) => {
   if (event.source !== window) return;
   
   if (event.data.type === 'STORAGE_UPDATE') {
-    console.log('📡 Widget received storage update:', event.data.data);
+    console.log('Widget received storage update:', event.data.data);
     const changes = event.data.data;
     
     if (changes.eventCount) {
       WIDGET_STATE.eventCount = changes.eventCount.newValue || 0;
-      console.log('📈 Event count updated:', WIDGET_STATE.eventCount);
+      console.log('Event count updated:', WIDGET_STATE.eventCount);
     }
     if (changes.totalTokens) {
       WIDGET_STATE.totalTokens = changes.totalTokens.newValue || 0;
@@ -112,4 +112,4 @@ function initWidget() {
 }
 
 initWidget();
-console.log('✅ Widget ready');
+console.log('Widget ready');

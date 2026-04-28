@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>ChatGPT Usage Tracker</title>
+  <title>TamagotGPT - Extension</title>
   <style>
     * {
       margin: 0;
@@ -12,138 +12,167 @@
     }
 
     body {
-      width: 350px;
+      width: 400px;
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-      color: #333;
+      background: #eef8f2;
+      color: #1e293b;
     }
 
     .container {
-      padding: 20px;
+      padding: 16px;
     }
 
     .header {
+      background: white;
+      border-radius: 2rem;
+      border: 1px solid #d7eee2;
+      padding: 24px;
+      margin-bottom: 16px;
+      box-shadow: 0 4px 18px rgba(35, 83, 61, 0.06);
+    }
+
+    .header-top {
       display: flex;
       align-items: center;
-      gap: 10px;
-      margin-bottom: 20px;
-      color: white;
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+
+    .header-tag {
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0.16em;
+      color: #2d9b72;
+      text-transform: uppercase;
     }
 
     .header h1 {
+      font-size: 28px;
+      font-weight: 700;
+      color: #0f172a;
+      margin-bottom: 8px;
+    }
+
+    .header p {
       font-size: 16px;
-      font-weight: 600;
+      color: #64748b;
     }
 
-    .status {
+    .card {
       background: white;
-      border-radius: 8px;
-      padding: 15px;
-      margin-bottom: 15px;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+      border-radius: 2rem;
+      border: 1px solid #d7eee2;
+      padding: 24px;
+      margin-bottom: 16px;
+      box-shadow: 0 4px 18px rgba(35, 83, 61, 0.06);
     }
 
-    .status-item {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      margin-bottom: 10px;
-      font-size: 14px;
-    }
-
-    .status-item:last-child {
-      margin-bottom: 0;
-    }
-
-    .status-label {
-      color: #666;
-      font-weight: 500;
-    }
-
-    .status-value {
-      color: #333;
-      font-weight: 600;
-    }
-
-    .status-badge {
-      display: inline-block;
-      padding: 4px 8px;
-      border-radius: 4px;
-      font-size: 12px;
-      font-weight: 600;
-    }
-
-    .status-badge.active {
-      background: #d1fae5;
-      color: #065f46;
-    }
-
-    .status-badge.inactive {
-      background: #fee2e2;
-      color: #991b1b;
-    }
-
-    .section {
-      background: white;
-      border-radius: 8px;
-      padding: 15px;
-      margin-bottom: 15px;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-    }
-
-    .section-title {
-      font-size: 14px;
-      font-weight: 600;
-      color: #333;
-      margin-bottom: 10px;
+    .card-title {
+      font-size: 18px;
+      font-weight: 700;
+      color: #0f172a;
+      margin-bottom: 16px;
       display: flex;
       align-items: center;
       gap: 8px;
     }
 
-    .section-icon {
-      font-size: 16px;
+    .card-icon {
+      font-size: 20px;
     }
 
-    .form-group {
-      margin-bottom: 12px;
+    .status-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      margin-bottom: 16px;
     }
 
-    .form-group:last-child {
-      margin-bottom: 0;
+    .status-item {
+      background: #f7fcf9;
+      border-radius: 1.35rem;
+      border: 1px solid #d7eee2;
+      padding: 16px;
+      text-align: center;
     }
 
-    label {
+    .status-label {
+      font-size: 13px;
+      color: #64748b;
+      margin-bottom: 4px;
       display: block;
-      font-size: 13px;
-      color: #666;
-      margin-bottom: 6px;
-      font-weight: 500;
     }
 
-    input,
-    textarea {
-      width: 100%;
-      padding: 8px 10px;
-      border: 1px solid #e5e7eb;
-      border-radius: 4px;
-      font-size: 13px;
-      font-family: monospace;
-      resize: vertical;
+    .status-value {
+      font-size: 24px;
+      font-weight: 700;
+      color: #0ea56a;
     }
 
-    input:focus,
-    textarea:focus {
-      outline: none;
-      border-color: #667eea;
-      box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+    .connection-status {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 12px;
+      border-radius: 1.35rem;
+      font-size: 14px;
+      margin-bottom: 16px;
+    }
+
+    .connection-status.connected {
+      background: #dff3e9;
+      border: 1px solid #c9eadc;
+      color: #145c43;
+    }
+
+    .connection-status.disconnected {
+      background: #fee2e2;
+      border: 1px solid #fecaca;
+      color: #991b1b;
+    }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      display: inline-block;
+    }
+
+    .status-dot.connected {
+      background: #0ea56a;
+      animation: pulse-connected 2s infinite;
+    }
+
+    .status-dot.disconnected {
+      background: #dc2626;
+    }
+
+    @keyframes pulse-connected {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.7; }
+    }
+
+    .info-box {
+      background: #f7fcf9;
+      border-radius: 1.6rem;
+      border: 1px dashed #c9dad1;
+      padding: 16px;
+      font-size: 14px;
+      color: #475569;
+      margin-bottom: 16px;
+      line-height: 1.6;
+    }
+
+    .button-group {
+      display: flex;
+      gap: 12px;
     }
 
     button {
-      width: 100%;
-      padding: 10px 12px;
+      flex: 1;
+      padding: 12px 16px;
       border: none;
-      border-radius: 4px;
+      border-radius: 9999px;
       font-size: 14px;
       font-weight: 600;
       cursor: pointer;
@@ -151,112 +180,67 @@
     }
 
     .btn-primary {
-      background: #667eea;
+      background: #0ea56a;
       color: white;
     }
 
     .btn-primary:hover {
-      background: #5568d3;
+      background: #0c935f;
     }
 
     .btn-secondary {
-      background: #e5e7eb;
-      color: #333;
+      background: white;
+      color: #64748b;
+      border: 1px solid #d7eee2;
     }
 
     .btn-secondary:hover {
-      background: #d1d5db;
+      background: #f7fcf9;
     }
 
-    .btn-small {
-      padding: 6px 10px;
+    .text-center {
+      text-align: center;
       font-size: 12px;
-      width: auto;
-      margin-right: 6px;
-    }
-
-    .message {
-      padding: 10px;
-      border-radius: 4px;
-      font-size: 13px;
-      margin-bottom: 10px;
-      display: none;
-    }
-
-    .message.success {
-      display: block;
-      background: #d1fae5;
-      color: #065f46;
-      border: 1px solid #a7f3d0;
-    }
-
-    .message.error {
-      display: block;
-      background: #fee2e2;
-      color: #991b1b;
-      border: 1px solid #fecaca;
-    }
-
-    .info-text {
-      font-size: 12px;
-      color: #666;
-      margin-top: 8px;
-      line-height: 1.4;
-    }
-
-    .divider {
-      height: 1px;
-      background: #e5e7eb;
-      margin: 12px 0;
+      color: #94a3b8;
     }
   </style>
 </head>
 <body>
   <div class="container">
+    <!-- Header -->
     <div class="header">
-      <span style="font-size: 20px;">📊</span>
-      <h1>ChatGPT Tracker</h1>
+      <div class="header-top">
+        <span class="header-tag">TamagotGPT</span>
+      </div>
+      <h1>Extension Status</h1>
+      <p>Monitor your ChatGPT usage and sync status</p>
+      </div>
+      <!-- Connection Status -->
+      <div class="card">
+        <div class="card-title">
+          <span class="card-icon"></span>
+          Connection
+        </div>
+        <div id="connectionStatus" class="connection-status connected">
+          <span class="status-dot connected"></span>
+          <span id="connectionText">Checking connection...</span>
+        </div>
+        </div>
+
+<!-- Info -->
+<div class="info-box">
+  <strong> How it works:</strong> The extension automatically tracks your ChatGPT messages on chatgpt.com and sends
+  them to your dashboard. Make sure to authenticate from the settings page to enable secure syncing.
     </div>
 
-    <div class="status">
-      <div class="status-item">
-        <span class="status-label">Status</span>
-        <span class="status-badge active">🟢 Auto-tracking on</span>
-      </div>
-      <div class="status-item">
-        <span class="status-label">Messages Tracked</span>
-        <span id="eventCount" class="status-value">0</span>
-      </div>
-      <div class="status-item">
-        <span class="status-label">Last Event</span>
-        <span id="lastEvent" class="status-value">—</span>
-      </div>
+    <!-- Actions -->
+    <div class="button-group">
+      <button id="dashboardBtn" class="btn-primary">Open Dashboard</button>
+      <button id="settingsBtn" class="btn-secondary">Settings</button>
     </div>
-
-    <div class="section">
-      <div class="section-title">
-        <span class="section-icon">✨</span>
-        Auto-tracking Enabled
-      </div>
-      <p class="info-text">
-        🤖 The extension automatically tracks all your ChatGPT messages in the background.
-      </p>
-      <p class="info-text" style="margin-top: 10px;">
-        💾 All data is saved securely to your database without requiring any manual setup.
-      </p>
-    </div>
-
-    <div class="section">
-      <div class="section-title">
-        <span class="section-icon">📈</span>
-        Quick Links
-      </div>
-      <button id="dashboardBtn" class="btn-secondary">Open Dashboard</button>
-    </div>
-
-    <div class="info-text" style="color: #999; text-align: center; margin-top: 15px;">
-      Extension is tracking ChatGPT usage on chatgpt.com
-    </div>
+<p class="text-center" style="margin-top: 12px;">
+  Auto-tracking enabled
+</p>
   </div>
 
   <script src="popup.js"></script>

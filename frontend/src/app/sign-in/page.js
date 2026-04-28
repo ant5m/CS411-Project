@@ -27,6 +27,17 @@ export default function SignIn() {
 
       if (signInError) throw signInError
 
+      // Get the session and send token to extension
+      const { data: { session } } = await supabase.auth.getSession()
+      if (session?.access_token && session?.user?.id) {
+        window.postMessage({
+          type: 'CHATGPT_TRACKER_AUTH',
+          token: session.access_token,
+          userId: session.user.id,
+        }, '*')
+        console.log('📤 Sent auth token to extension from sign-in')
+      }
+
       router.push('/dashboard')
     } catch (err) {
       setError(err.message)
